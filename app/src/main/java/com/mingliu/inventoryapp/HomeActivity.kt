@@ -45,9 +45,18 @@ private const val ADMIN_MENU_CHANGE_PASSWORD = 1
 private const val ADMIN_MENU_SORT_PREFERENCE = 2
 private const val ADMIN_MENU_GLOBAL_HISTORY = 3
 private const val ADMIN_MENU_STOCK_CHART = 4
-private const val ADMIN_MENU_LOGOUT = 5
+private const val ADMIN_MENU_GLOBAL_SETTINGS = 5
+private const val ADMIN_MENU_VALUATION_REPORT = 6
+private const val ADMIN_MENU_LOGOUT = 7
 private const val RADIO_ID_STOCK_IN = 1001
 private const val RADIO_ID_STOCK_OUT = 1002
+
+/** Parses a Retrofit "Any"-typed numeric field (server may send a JSON number or numeric string). */
+private fun anyToDoubleOrNull(value: Any?): Double? = when (value) {
+    is Number -> value.toDouble()
+    is String -> value.toDoubleOrNull()
+    else -> null
+}
 
 /**
  * Main screen after login. Shows the stock list with live search and
@@ -244,12 +253,18 @@ class HomeActivity : AppCompatActivity() {
     // Admin menu & settings
     // =====================================================================
 
-    /** Entry point for the gear-icon menu: operator management, password change, sort settings, history, chart, logout. */
+    /** Entry point for the gear-icon menu: operator management, password change, sort settings, history, chart, global settings, valuation report, logout. */
     private fun showAdminMenuDialog() {
         val options = if (currentUserIsAdmin) {
-            arrayOf("人員權限與名冊維護", "變更個人或人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表", "登出系統，安全退出")
+            arrayOf(
+                "人員權限與名冊維護", "變更個人或人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表",
+                "全域匯率及調整 factor 維護", "當前資產估值查詢", "登出系統，安全退出"
+            )
         } else {
-            arrayOf("人員權限與名冊維護 (僅限管理員)", "變更個人或人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表 (僅限管理員)", "登出系統，安全退出")
+            arrayOf(
+                "人員權限與名冊維護 (僅限管理員)", "變更個人或人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表 (僅限管理員)",
+                "全域匯率及調整 factor 維護 (僅限管理員)", "當前資產估值查詢 (僅限管理員)", "登出系統，安全退出"
+            )
         }
 
         AlertDialog.Builder(this)
@@ -270,6 +285,19 @@ class HomeActivity : AppCompatActivity() {
                         dialog.dismiss()
                         if (currentUserIsAdmin) {
                             startActivity(Intent(this, StockChartActivity::class.java))
+                        } else {
+                            Toast.makeText(this, "此功能已鎖定，僅限管理員操作", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    ADMIN_MENU_GLOBAL_SETTINGS -> {
+                        dialog.dismiss()
+                        if (currentUserIsAdmin) showGlobalSettingsDialog()
+                        else Toast.makeText(this, "此功能已鎖定，僅限管理員操作", Toast.LENGTH_SHORT).show()
+                    }
+                    ADMIN_MENU_VALUATION_REPORT -> {
+                        dialog.dismiss()
+                        if (currentUserIsAdmin) {
+                            startActivity(Intent(this, ValuationReportActivity::class.java))
                         } else {
                             Toast.makeText(this, "此功能已鎖定，僅限管理員操作", Toast.LENGTH_SHORT).show()
                         }
@@ -769,47 +797,78 @@ class HomeActivity : AppCompatActivity() {
     // Item management (admin only)
     // =====================================================================
 
-    private fun showAddItemDialog() {
-        val context = this
+    /** Views making up the create/edit item form, so both dialogs can share the same layout code. */
+    private class ItemFormFields(
+        val container: LinearLayout,
+        val edtName: EditText,
+        val spinnerCategory: Spinner,
+        val edtUsdPrice: EditText,
+        val edtRate: EditText,
+        val edtTax: EditText
+    )
+
+    /**
+     * Builds the item name/category/price/rate/factor form, used for both
+     * "建立全新商品主檔" (create) and "編輯商品主檔" (edit). If [prefill] is
+     * given, fields are populated from it; exchange rate / tax factor are
+     * left blank when the item has no per-item override (i.e. it currently
+     * uses the global fallback) rather than showing the resolved global value.
+     */
+    private fun buildItemFormFields(context: Context, prefill: Product?): ItemFormFields {
         val container = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(60, 40, 60, 20) }
-        val edtName = EditText(context).apply { hint = "商品名稱" }
+
+        val edtName = EditText(context).apply {
+            hint = "商品名稱"
+            prefill?.let { setText(it.item_name) }
+        }
         val spinnerCategory = Spinner(context).apply {
             adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, arrayOf("Main", "Accessories"))
             setPadding(0, 20, 0, 20)
+            // Default new items to Accessories (index 1); when editing, match the item's actual category.
+            setSelection(if (prefill == null || prefill.category == "Accessories") 1 else 0)
         }
         val edtUsdPrice = EditText(context).apply {
-            hint = "美金單價 (USD)"
+            hint = "採購幣別單價"
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            prefill?.let { anyToDoubleOrNull(it.usd_price)?.let { v -> setText(v.toString()) } }
         }
         val edtRate = EditText(context).apply {
-            hint = "匯率"
-            setText("32.5")
+            hint = "匯率 (留空 = 使用全域匯率)"
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            prefill?.let { anyToDoubleOrNull(it.exchange_rate)?.let { v -> setText(v.toString()) } }
         }
         val edtTax = EditText(context).apply {
-            hint = "稅率係數"
-            setText("0.05")
+            hint = "調整 factor (留空 = 使用全域 factor)"
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            prefill?.let { anyToDoubleOrNull(it.tax_coefficient)?.let { v -> setText(v.toString()) } }
         }
+
         container.addView(edtName)
         container.addView(spinnerCategory)
         container.addView(edtUsdPrice)
         container.addView(edtRate)
         container.addView(edtTax)
 
+        return ItemFormFields(container, edtName, spinnerCategory, edtUsdPrice, edtRate, edtTax)
+    }
+
+    private fun showAddItemDialog() {
+        val context = this
+        val fields = buildItemFormFields(context, prefill = null)
+
         AlertDialog.Builder(context)
             .setTitle("建立全新商品主檔")
-            .setView(container)
+            .setView(fields.container)
             .setPositiveButton("建立") { _, _ ->
-                val name = edtName.text.toString().trim()
-                val usd = edtUsdPrice.text.toString().trim()
+                val name = fields.edtName.text.toString().trim()
+                val usd = fields.edtUsdPrice.text.toString().trim()
                 if (name.isNotEmpty() && usd.isNotEmpty()) {
                     sendCreateItemRequest(
                         name,
-                        spinnerCategory.selectedItem.toString(),
+                        fields.spinnerCategory.selectedItem.toString(),
                         usd.toDouble(),
-                        edtRate.text.toString().toDouble(),
-                        edtTax.text.toString().toDouble()
+                        fields.edtRate.text.toString().trim().toDoubleOrNull(),
+                        fields.edtTax.text.toString().trim().toDoubleOrNull()
                     )
                 }
             }
@@ -817,7 +876,7 @@ class HomeActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun sendCreateItemRequest(name: String, cat: String, usd: Double, rate: Double, tax: Double) {
+    private fun sendCreateItemRequest(name: String, cat: String, usd: Double, rate: Double?, tax: Double?) {
         RetrofitClient.instance.createItem(ItemCreateRequest(name, cat, usd, rate, tax)).enqueue(object : Callback<ItemCreateResponse> {
             override fun onResponse(call: Call<ItemCreateResponse>, response: Response<ItemCreateResponse>) {
                 if (response.isSuccessful) {
@@ -834,6 +893,239 @@ class HomeActivity : AppCompatActivity() {
         })
     }
 
+    /**
+     * Checks whether [product] has any transaction history, then shows an
+     * Edit/Delete menu -- Delete is disabled (grayed out, unclickable) if
+     * the item has at least one transaction, since deleting it would either
+     * fail server-side or orphan historical records.
+     */
+    private fun showItemEditMenuDialog(product: Product) {
+        RetrofitClient.instance.getItemHistory(product.item_id).enqueue(object : Callback<List<TransactionHistoryItem>> {
+            override fun onResponse(call: Call<List<TransactionHistoryItem>>, response: Response<List<TransactionHistoryItem>>) {
+                val hasTransactions = if (response.isSuccessful) {
+                    (response.body() ?: emptyList()).isNotEmpty()
+                } else {
+                    true // couldn't verify -> be conservative and disable Delete
+                }
+                runOnUiThread { renderItemEditMenu(product, hasTransactions) }
+            }
+
+            override fun onFailure(call: Call<List<TransactionHistoryItem>>, t: Throwable) {
+                Log.e(TAG, "Failed to check transaction history for item [${product.item_name}]: ${t.localizedMessage}")
+                runOnUiThread { renderItemEditMenu(product, hasTransactions = true) }
+            }
+        })
+    }
+
+    private fun renderItemEditMenu(product: Product, hasTransactions: Boolean) {
+        val context = this
+        val container = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+
+        val rowEdit = TextView(context).apply {
+            text = "編輯商品"
+            textSize = 15f
+            setTextColor(Color.parseColor("#2A3B50"))
+            setPadding(50, 30, 50, 30)
+        }
+        val divider = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2)
+            setBackgroundColor(Color.parseColor("#E1E0D9"))
+        }
+        val rowDelete = TextView(context).apply {
+            text = if (hasTransactions) "刪除商品\n(已有交易紀錄，無法刪除)" else "刪除商品"
+            textSize = 15f
+            setTextColor(if (hasTransactions) Color.parseColor("#ADB5BD") else Color.parseColor("#DC3545"))
+            setPadding(50, 30, 50, 30)
+        }
+
+        container.addView(rowEdit)
+        container.addView(divider)
+        container.addView(rowDelete)
+
+        val menuDialog = AlertDialog.Builder(context)
+            .setTitle(product.item_name)
+            .setView(container)
+            .setNegativeButton("取消", null)
+            .create()
+
+        rowEdit.setOnClickListener { menuDialog.dismiss(); showEditItemDialog(product) }
+        if (!hasTransactions) {
+            rowDelete.setOnClickListener { menuDialog.dismiss(); confirmAndDeleteItem(product) }
+        } // else: no click listener -> effectively disabled, matching the grayed-out styling above
+
+        menuDialog.show()
+    }
+
+    /** Edit form for an existing item: name, category, price, rate, factor. Never touches current_qty. */
+    private fun showEditItemDialog(product: Product) {
+        val context = this
+        val fields = buildItemFormFields(context, prefill = product)
+
+        val dialog = AlertDialog.Builder(context)
+            .setTitle("編輯商品主檔")
+            .setView(fields.container)
+            .setPositiveButton("儲存變更", null) // overridden below so validation failures don't auto-dismiss
+            .setNegativeButton("取消", null)
+            .create()
+        dialog.show()
+
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val name = fields.edtName.text.toString().trim()
+            val usdText = fields.edtUsdPrice.text.toString().trim()
+            val usd = usdText.toDoubleOrNull()
+
+            if (name.isEmpty() || usd == null) {
+                Toast.makeText(context, "商品名稱及採購幣別單價為必填，且單價須為數字！", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            sendUpdateItemRequest(
+                product.item_id,
+                name,
+                fields.spinnerCategory.selectedItem.toString(),
+                usd,
+                fields.edtRate.text.toString().trim().toDoubleOrNull(),
+                fields.edtTax.text.toString().trim().toDoubleOrNull()
+            )
+            dialog.dismiss()
+        }
+    }
+
+    private fun sendUpdateItemRequest(itemId: Int, name: String, cat: String, usd: Double, rate: Double?, tax: Double?) {
+        RetrofitClient.instance.updateItem(itemId, ItemCreateRequest(name, cat, usd, rate, tax)).enqueue(object : Callback<ResponseBody> {
+            override fun onResponse(call: Call<ResponseBody>, response: Response<ResponseBody>) {
+                runOnUiThread {
+                    if (response.isSuccessful) {
+                        Toast.makeText(this@HomeActivity, "商品已更新！", Toast.LENGTH_SHORT).show()
+                        loadStockData()
+                    } else {
+                        Toast.makeText(this@HomeActivity, "更新失敗 (HTTP ${response.code()})", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            override fun onFailure(call: Call<ResponseBody>, t: Throwable) {
+                Log.e(TAG, "Failed to update item [$name]: ${t.localizedMessage}")
+                runOnUiThread { Toast.makeText(this@HomeActivity, "無法連線到伺服器：${t.localizedMessage}", Toast.LENGTH_LONG).show() }
+            }
+        })
+    }
+
+    private fun confirmAndDeleteItem(product: Product) {
+        AlertDialog.Builder(this)
+            .setTitle("刪除確認")
+            .setMessage("您確定要刪除商品 [${product.item_name}] 嗎？此動作無法復原。")
+            .setPositiveButton("確定刪除") { _, _ -> sendDeleteItemRequest(product) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun sendDeleteItemRequest(product: Product) {
+        RetrofitClient.instance.deleteItem(product.item_id).enqueue(object : Callback<ResponseBody> {
+            override fun onResponse(call: Call<ResponseBody>, response: Response<ResponseBody>) {
+                runOnUiThread {
+                    if (response.isSuccessful) {
+                        Toast.makeText(this@HomeActivity, "商品 [${product.item_name}] 已刪除", Toast.LENGTH_SHORT).show()
+                        loadStockData()
+                    } else {
+                        Toast.makeText(this@HomeActivity, "刪除失敗 (HTTP ${response.code()})：此項目可能已有交易紀錄", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            override fun onFailure(call: Call<ResponseBody>, t: Throwable) {
+                Log.e(TAG, "Failed to delete item [${product.item_name}]: ${t.localizedMessage}")
+                runOnUiThread { Toast.makeText(this@HomeActivity, "無法連線到伺服器：${t.localizedMessage}", Toast.LENGTH_LONG).show() }
+            }
+        })
+    }
+
+    /** Admin-only: view/edit the global exchange rate & adjustment factor used by items without their own override. */
+    private fun showGlobalSettingsDialog() {
+        val context = this
+        RetrofitClient.instance.getGlobalSettings().enqueue(object : Callback<GlobalSettingsResponse> {
+            override fun onResponse(call: Call<GlobalSettingsResponse>, response: Response<GlobalSettingsResponse>) {
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "Failed to load global settings: HTTP ${response.code()}")
+                    runOnUiThread { Toast.makeText(context, "讀取全域參數失敗 (HTTP ${response.code()})", Toast.LENGTH_LONG).show() }
+                    return
+                }
+                val settings = response.body() ?: return
+                runOnUiThread { renderGlobalSettingsDialog(settings) }
+            }
+
+            override fun onFailure(call: Call<GlobalSettingsResponse>, t: Throwable) {
+                Log.e(TAG, "Network error loading global settings: ${t.localizedMessage}")
+                runOnUiThread { Toast.makeText(context, "無法連線到伺服器：${t.localizedMessage}", Toast.LENGTH_LONG).show() }
+            }
+        })
+    }
+
+    private fun renderGlobalSettingsDialog(settings: GlobalSettingsResponse) {
+        val context = this
+        val container = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(60, 40, 60, 20) }
+
+        val txtNotice = TextView(context).apply {
+            text = "未設定個別匯率/factor 的商品，估值時將套用以下全域參數。"
+            textSize = 12f
+            setTextColor(Color.parseColor("#D3D3D3"))
+            setPadding(0, 0, 0, 20)
+        }
+        val edtRate = EditText(context).apply {
+            hint = "全域匯率"
+            setText(settings.global_exchange_rate.toString())
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        val edtTax = EditText(context).apply {
+            hint = "全域調整 factor"
+            setText(settings.global_tax_coefficient.toString())
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        container.addView(txtNotice)
+        container.addView(edtRate)
+        container.addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 25) })
+        container.addView(edtTax)
+
+        val dialog = AlertDialog.Builder(context)
+            .setTitle("全域匯率及調整 factor 維護")
+            .setView(container)
+            .setPositiveButton("儲存", null) // overridden below so validation failures don't auto-dismiss
+            .setNegativeButton("取消", null)
+            .create()
+        dialog.show()
+
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val rate = edtRate.text.toString().trim().toDoubleOrNull()
+            val tax = edtTax.text.toString().trim().toDoubleOrNull()
+            if (rate == null || tax == null) {
+                Toast.makeText(context, "請輸入有效的數字！", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            sendUpdateGlobalSettings(rate, tax)
+            dialog.dismiss()
+        }
+    }
+
+    private fun sendUpdateGlobalSettings(rate: Double, tax: Double) {
+        RetrofitClient.instance.updateGlobalSettings(GlobalSettingsUpdateRequest(rate, tax)).enqueue(object : Callback<ResponseBody> {
+            override fun onResponse(call: Call<ResponseBody>, response: Response<ResponseBody>) {
+                runOnUiThread {
+                    if (response.isSuccessful) {
+                        Toast.makeText(this@HomeActivity, "全域參數已更新！", Toast.LENGTH_SHORT).show()
+                        loadStockData()
+                    } else {
+                        Toast.makeText(this@HomeActivity, "更新失敗 (HTTP ${response.code()})", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            override fun onFailure(call: Call<ResponseBody>, t: Throwable) {
+                Log.e(TAG, "Failed to update global settings: ${t.localizedMessage}")
+                runOnUiThread { Toast.makeText(this@HomeActivity, "無法連線到伺服器：${t.localizedMessage}", Toast.LENGTH_LONG).show() }
+            }
+        })
+    }
+
     // =====================================================================
     // Stock transactions (in / out) & item history
     // =====================================================================
@@ -842,6 +1134,31 @@ class HomeActivity : AppCompatActivity() {
     private fun showTransactionDialog(product: Product) {
         val context = this
         val container = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(60, 40, 60, 20) }
+
+        // Custom title bar: item name on the left, a "..." menu button (Edit/Delete) on the right.
+        val titleView = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(40, 30, 30, 10)
+        }
+        val titleText = TextView(context).apply {
+            text = "庫存異動調整: ${product.item_name}"
+            textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.parseColor("#212529"))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val btnEditMenu = TextView(context).apply {
+            text = "⋯"
+            textSize = 20f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.parseColor("#495057"))
+            setPadding(20, 0, 10, 0)
+            isClickable = true
+            isFocusable = true
+        }
+        titleView.addView(titleText)
+        titleView.addView(btnEditMenu)
 
         val radioGroup = RadioGroup(context).apply { orientation = RadioGroup.HORIZONTAL; setPadding(0, 0, 0, 30) }
         val radioIn = RadioButton(context).apply { text = "入庫"; id = RADIO_ID_STOCK_IN; isChecked = true; setTextColor(Color.BLACK) }
@@ -873,14 +1190,23 @@ class HomeActivity : AppCompatActivity() {
         container.addView(btnHistory)
 
         val alertDialog = AlertDialog.Builder(context)
-            .setTitle("庫存異動調整: ${product.item_name}")
+            .setCustomTitle(titleView)
             .setView(container)
             .setPositiveButton("確定送出", null) // overridden below so validation failures don't auto-dismiss
             .setNegativeButton("取消", null)
             .create()
 
         btnHistory.setOnClickListener { alertDialog.dismiss(); showHistoryDialog(product) }
+        btnEditMenu.setOnClickListener {
+            if (currentUserIsAdmin) {
+                alertDialog.dismiss()
+                showItemEditMenuDialog(product)
+            } else {
+                Toast.makeText(context, "此功能已鎖定，僅限管理員操作", Toast.LENGTH_SHORT).show()
+            }
+        }
         alertDialog.show()
+
 
         alertDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val qty = edtQty.text.toString().trim().toIntOrNull() ?: 0

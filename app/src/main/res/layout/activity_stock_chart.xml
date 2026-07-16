@@ -64,19 +64,63 @@
             android:text="金額 (TWD)" />
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/tvSelectionDetail"
+    <!-- Tap-detail panel: clear title (month + 出庫/入庫/現有庫存) + horizontally scrollable per-product chips -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:minHeight="72dp"
+        android:orientation="vertical"
         android:background="#FFFFFF"
         android:padding="12dp"
         android:layout_marginHorizontal="12dp"
-        android:layout_marginBottom="8dp"
-        android:text="點擊任一長條圖，查看該月各商品的詳細數字。"
-        android:textColor="#495057"
-        android:textSize="13sp"
-        android:lineSpacingExtra="2dp" />
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/tvDetailTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="點擊任一長條圖，查看詳細數字"
+            android:textColor="#2A3B50"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:fillViewport="false">
+
+            <LinearLayout
+                android:id="@+id/llDetailChips"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <!-- Product legend: horizontally scrollable so it stays compact with many products -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="← 產品圖例可左右滑動"
+        android:textColor="#ADB5BD"
+        android:textSize="11sp"
+        android:paddingHorizontal="16dp" />
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:fillViewport="false"
+        android:paddingBottom="4dp">
+
+        <LinearLayout
+            android:id="@+id/llLegend"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp" />
+    </HorizontalScrollView>
 
     <com.github.mikephil.charting.charts.BarChart
         android:id="@+id/barChartMonthly"
@@ -84,6 +128,15 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:layout_marginHorizontal="8dp"
-        android:layout_marginBottom="8dp" />
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="← 向左滑動查看更早月份"
+        android:textColor="#ADB5BD"
+        android:textSize="11sp"
+        android:gravity="center"
+        android:paddingBottom="12dp" />
 
 </LinearLayout>

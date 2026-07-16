@@ -128,9 +128,9 @@ def create_access_token(data: dict) -> str:
 
 
 def get_current_user(
-    request: Request,
-    token: str = Depends(oauth2_scheme),
-    conn=Depends(get_db_connection),
+        request: Request,
+        token: str = Depends(oauth2_scheme),
+        conn=Depends(get_db_connection),
 ):
     """Resolve the currently authenticated operator from the bearer token."""
     credentials_exception = HTTPException(
@@ -192,8 +192,13 @@ class ItemCreateUpdate(BaseModel):
     item_name: str
     category: str = Field(..., description="Main or Accessories")
     usd_price: float
-    exchange_rate: float
-    tax_coefficient: float
+    exchange_rate: Optional[float] = None    # None = fall back to the global exchange rate at valuation time
+    tax_coefficient: Optional[float] = None  # None = fall back to the global adjustment factor at valuation time
+
+
+class GlobalSettingsUpdate(BaseModel):
+    global_exchange_rate: float
+    global_tax_coefficient: float
 
 
 class TransactionCreate(BaseModel):
@@ -229,10 +234,10 @@ def get_all_operators(conn=Depends(get_db_connection)):
 
 @app.post("/api/operators/{operator_id}/password")
 def change_operator_password(
-    operator_id: int,
-    payload: OperatorUpdatePassword,
-    current_user=Depends(get_current_user),
-    conn=Depends(get_db_connection),
+        operator_id: int,
+        payload: OperatorUpdatePassword,
+        current_user=Depends(get_current_user),
+        conn=Depends(get_db_connection),
 ):
     """Change an operator's password.
 
@@ -326,7 +331,12 @@ def delete_operator(operator_id: int, conn=Depends(get_db_connection)):
 # ---------------------------------------------------------------------------
 @app.post("/api/items", dependencies=[Depends(verify_admin)])
 def add_item(item: ItemCreateUpdate, current_user=Depends(get_current_user), conn=Depends(get_db_connection)):
-    """Create a new item and its zero-quantity stock entry."""
+    """Create a new item and its zero-quantity stock entry.
+
+    exchange_rate/tax_coefficient are optional -- leave them unset (None) to
+    have this item fall back to the global exchange rate / adjustment factor
+    (see GET/PUT /api/settings/global) at valuation time.
+    """
     if item.category not in ["Main", "Accessories"]:
         raise HTTPException(status_code=400, detail="類別必須是 'Main' 或 'Accessories'")
     try:
@@ -351,7 +361,12 @@ def add_item(item: ItemCreateUpdate, current_user=Depends(get_current_user), con
 
 @app.put("/api/items/{item_id}", dependencies=[Depends(verify_admin)])
 def update_item(item_id: int, item: ItemCreateUpdate, current_user=Depends(get_current_user), conn=Depends(get_db_connection)):
-    """Update an existing item's master data."""
+    """Update an existing item's master data (name, category, price, rate, factor).
+
+    Does not touch current_qty -- stock levels only change via /api/transactions.
+    exchange_rate/tax_coefficient are optional; leave unset (None) to use the
+    global fallback values instead of an item-specific override.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """UPDATE item_master
@@ -387,6 +402,40 @@ def get_items_by_category(category: str, conn=Depends(get_db_connection)):
     with conn.cursor() as cur:
         cur.execute("SELECT item_id, item_name FROM item_master WHERE category = %s", (category,))
         return cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Global settings: fallback exchange rate / adjustment factor
+# ---------------------------------------------------------------------------
+@app.get("/api/settings/global", dependencies=[Depends(verify_admin)])
+def get_global_settings(conn=Depends(get_db_connection)):
+    """Return the global exchange rate / adjustment factor used by items that don't set their own. Admin only."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT global_exchange_rate, global_tax_coefficient FROM system_settings WHERE id = 1")
+        settings = cur.fetchone()
+        if not settings:
+            raise HTTPException(status_code=500, detail="系統參數尚未初始化，請先執行資料庫 migration。")
+        return {
+            "global_exchange_rate": float(settings["global_exchange_rate"]),
+            "global_tax_coefficient": float(settings["global_tax_coefficient"]),
+        }
+
+
+@app.put("/api/settings/global", dependencies=[Depends(verify_admin)])
+def update_global_settings(payload: GlobalSettingsUpdate, current_user=Depends(get_current_user), conn=Depends(get_db_connection)):
+    """Update the global exchange rate / adjustment factor. Admin only."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE system_settings
+               SET global_exchange_rate = %s, global_tax_coefficient = %s,
+                   last_update_date = CURRENT_DATE, last_update_operator_id = %s
+               WHERE id = 1""",
+            (payload.global_exchange_rate, payload.global_tax_coefficient, current_user["operator_id"]),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=500, detail="系統參數尚未初始化，請先執行資料庫 migration。")
+        conn.commit()
+    return {"message": "全域參數已更新"}
 
 
 # ---------------------------------------------------------------------------
@@ -494,16 +543,33 @@ def search_transactions_by_date(start_date: date, end_date: date, conn=Depends(g
 def get_stock_valuation(conn=Depends(get_db_connection)):
     """Return current stock valuation per item plus the grand total (TWD).
 
-    Per-item TWD amount = usd_price * exchange_rate * (1 + tax_coefficient) * current_qty
+    Per-item TWD amount = usd_price * exchange_rate_used * (1 + tax_coefficient_used) * current_qty
+
+    exchange_rate/tax_coefficient in the response are the item's *raw*
+    per-item override (null if the item uses the global fallback) -- used
+    to correctly prefill the edit-item form as blank vs. filled.
+    exchange_rate_used/tax_coefficient_used are the *resolved* values
+    actually applied to this valuation (item override, or the global
+    default) -- used for display, e.g. in the valuation report.
+    is_global_rate/is_global_tax indicate which of the two was used.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT i.item_id, i.item_name, i.category, s.current_qty, i.usd_price, i.exchange_rate, i.tax_coefficient,
+            SELECT i.item_id, i.item_name, i.category, s.current_qty, i.usd_price,
+                   i.exchange_rate, i.tax_coefficient,
+                   COALESCE(i.exchange_rate, ss.global_exchange_rate) AS exchange_rate_used,
+                   COALESCE(i.tax_coefficient, ss.global_tax_coefficient) AS tax_coefficient_used,
+                   (i.exchange_rate IS NULL) AS is_global_rate,
+                   (i.tax_coefficient IS NULL) AS is_global_tax,
                    s.last_update_date, s.last_update_time,
-                   ROUND(CAST(i.usd_price * i.exchange_rate * (1 + i.tax_coefficient) * s.current_qty AS NUMERIC), 2) as twd_amount
+                   ROUND(CAST(i.usd_price * COALESCE(i.exchange_rate, ss.global_exchange_rate)
+                       * (1 + COALESCE(i.tax_coefficient, ss.global_tax_coefficient)) AS NUMERIC), 4) AS unit_price_twd,
+                   ROUND(CAST(i.usd_price * COALESCE(i.exchange_rate, ss.global_exchange_rate)
+                       * (1 + COALESCE(i.tax_coefficient, ss.global_tax_coefficient)) * s.current_qty AS NUMERIC), 2) AS twd_amount
             FROM stock_master s
             JOIN item_master i ON s.item_id = i.item_id
+            CROSS JOIN system_settings ss
             ORDER BY i.category, i.item_name
             """
         )
@@ -562,10 +628,11 @@ def get_monthly_stock_summary(conn=Depends(get_db_connection)):
       - ending_qty / ending_value: stock level at the end of that month
         (carried forward from the prior month if there was no activity)
 
-    Valuation uses each item's *current* usd_price/exchange_rate/tax_coefficient
-    from item_master. There's no historical price table, so past months are
-    valued at today's prices, not the prices that were actually in effect then.
-    Admin only.
+    Valuation uses each item's *current* usd_price, and its own exchange_rate/
+    tax_coefficient if set, otherwise the global fallback values (see
+    GET /api/settings/global). There's no historical price table, so past
+    months are valued at today's prices/rates, not what was actually in
+    effect back then. Admin only.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -580,6 +647,11 @@ def get_monthly_stock_summary(conn=Depends(get_db_connection)):
                ORDER BY item_id, transaction_date ASC, transaction_time ASC, tran_id ASC"""
         )
         transactions = cur.fetchall()
+
+        cur.execute("SELECT global_exchange_rate, global_tax_coefficient FROM system_settings WHERE id = 1")
+        settings = cur.fetchone()
+        global_rate = float(settings["global_exchange_rate"]) if settings else 1.0
+        global_tax = float(settings["global_tax_coefficient"]) if settings else 0.0
 
     if not items:
         return {"months": [], "items": [], "data": []}
@@ -621,7 +693,9 @@ def get_monthly_stock_summary(conn=Depends(get_db_connection)):
         month_entry = {"month": month_label, "items": []}
 
         for item in items:
-            unit_value = float(item["usd_price"]) * float(item["exchange_rate"]) * (1 + float(item["tax_coefficient"]))
+            item_rate = float(item["exchange_rate"]) if item["exchange_rate"] is not None else global_rate
+            item_tax = float(item["tax_coefficient"]) if item["tax_coefficient"] is not None else global_tax
+            unit_value = float(item["usd_price"]) * item_rate * (1 + item_tax)
             bucket = tx_by_item_month.get((item["item_id"], month_label))
 
             incoming_qty = bucket["in"] if bucket else 0
@@ -692,6 +766,33 @@ def init_admin_account():
 
 
 init_admin_account()
+
+
+def init_system_settings():
+    """Ensure the system_settings singleton row exists (default rate 32.0 / factor 0.05).
+
+    Defensive only -- the migration script (migration_global_rate_settings.sql)
+    already seeds this row. If that migration hasn't been run yet, this
+    fails harmlessly and is logged rather than crashing the app; the
+    global-settings and valuation endpoints will error until the migration
+    is applied.
+    """
+    try:
+        conn = _connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO system_settings (id, global_exchange_rate, global_tax_coefficient)
+                   VALUES (1, 32.0000, 0.0500) ON CONFLICT (id) DO NOTHING"""
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(
+            "Could not verify/seed system_settings (has migration_global_rate_settings.sql been run?): %s", e
+        )
+
+
+init_system_settings()
 
 if __name__ == "__main__":
     import uvicorn

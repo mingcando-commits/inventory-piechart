@@ -48,6 +48,19 @@ interface ApiService {
         @Body request: ItemCreateRequest
     ): Call<ItemCreateResponse>
 
+    /** Updates an existing item's master data (name, category, price, rate, factor). Never touches current_qty. */
+    @PUT("/api/items/{item_id}")
+    fun updateItem(
+        @Path("item_id") itemId: Int,
+        @Body request: ItemCreateRequest
+    ): Call<ResponseBody>
+
+    /** Deletes an item. Server rejects (HTTP 400) if the item has any transaction history. */
+    @DELETE("/api/items/{item_id}")
+    fun deleteItem(
+        @Path("item_id") itemId: Int
+    ): Call<ResponseBody>
+
     @POST("/api/operators")
     fun createOperator(
         @Body request: OperatorCreateRequest
@@ -71,6 +84,16 @@ interface ApiService {
     /** Per-month, per-item stock movement summary, used by the trend chart screen. */
     @GET("api/stock/monthly-summary")
     fun getMonthlySummary(): Call<MonthlySummaryResponse>
+
+    /** The global exchange rate / adjustment factor used by items that don't set their own. Admin only. */
+    @GET("api/settings/global")
+    fun getGlobalSettings(): Call<GlobalSettingsResponse>
+
+    /** Updates the global exchange rate / adjustment factor. Admin only. */
+    @PUT("api/settings/global")
+    fun updateGlobalSettings(
+        @Body request: GlobalSettingsUpdateRequest
+    ): Call<ResponseBody>
 }
 
 // ========================================================
@@ -89,7 +112,16 @@ data class StockValuationResponse(
     val total_twd_amount: Double
 )
 
-/** A stock item as returned by /api/stock/valuation. */
+/**
+ * A stock item as returned by /api/stock/valuation.
+ *
+ * exchange_rate/tax_coefficient are the item's *raw* per-item override (null
+ * if this item uses the global fallback) -- used to correctly prefill the
+ * edit-item form as blank vs. filled.
+ * exchange_rate_used/tax_coefficient_used are the *resolved* values actually
+ * applied (item override, or the global default) -- used for display.
+ * is_global_rate/is_global_tax indicate which of the two was used.
+ */
 data class Product(
     @SerializedName("item_id", alternate = ["id", "id_item"])
     val item_id: Int,
@@ -99,7 +131,14 @@ data class Product(
     val usd_price: Any,
     val twd_amount: Any,
     val last_update_date: String?,
-    val last_update_time: String?
+    val last_update_time: String?,
+    val exchange_rate: Any? = null,
+    val tax_coefficient: Any? = null,
+    val exchange_rate_used: Any? = null,
+    val tax_coefficient_used: Any? = null,
+    val is_global_rate: Boolean? = null,
+    val is_global_tax: Boolean? = null,
+    val unit_price_twd: Any? = null
 )
 
 data class TransactionRequest(
@@ -114,12 +153,13 @@ data class TransactionResponse(
     val current_stock: Int
 )
 
+/** Used for both creating and updating an item -- null rate/factor means "use the global fallback". */
 data class ItemCreateRequest(
     val item_name: String,
     val category: String, // "Main" or "Accessories"
     val usd_price: Double,
-    val exchange_rate: Double,
-    val tax_coefficient: Double
+    val exchange_rate: Double?,
+    val tax_coefficient: Double?
 )
 
 data class ItemCreateResponse(
@@ -201,6 +241,17 @@ data class MonthlySummaryItemEntry(
 data class PasswordChangeRequest(
     val old_password: String, // required when a non-admin changes their own password
     val new_password: String
+)
+
+/** The global exchange rate / adjustment factor used by items that don't set their own. */
+data class GlobalSettingsResponse(
+    val global_exchange_rate: Double,
+    val global_tax_coefficient: Double
+)
+
+data class GlobalSettingsUpdateRequest(
+    val global_exchange_rate: Double,
+    val global_tax_coefficient: Double
 )
 
 // ========================================================

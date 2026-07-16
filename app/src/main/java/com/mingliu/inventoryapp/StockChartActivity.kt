@@ -1,14 +1,19 @@
 package com.mingliu.inventoryapp
 
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.github.mikephil.charting.charts.BarChart
-import com.github.mikephil.charting.components.LegendEntry
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.BarData
 import com.github.mikephil.charting.data.BarDataSet
@@ -32,13 +37,16 @@ private const val CATEGORY_INCOMING = 1
 private const val CATEGORY_OUTGOING = 2
 
 // How many month-groups are visible on screen at once before the user has to drag.
-private const val MAX_VISIBLE_MONTHS = 6f
+// More visible groups means each bar renders narrower on screen (they share the
+// same screen width), so this is a balance between "fatter bars" and "see more
+// months at once" -- 3 keeps bars reasonably chunky while showing a full quarter.
+private const val MAX_VISIBLE_MONTHS = 3f
 
 // Bar sizing chosen so (BAR_WIDTH + BAR_SPACE) * 3 + GROUP_SPACE == 1.0,
 // i.e. exactly one month-group per x-axis unit (see MPAndroidChart's groupBars docs).
-private const val BAR_WIDTH = 0.25f
+private const val BAR_WIDTH = 0.26f
 private const val BAR_SPACE = 0.02f
-private const val GROUP_SPACE = 0.19f
+private const val GROUP_SPACE = 0.16f
 
 /** Formats a TWD amount in thousands with one decimal place, e.g. 35600.0 -> "35.6k". */
 private fun formatMoneyK(value: Double): String = String.format(Locale.US, "%.1fk", value / 1000.0)
@@ -56,16 +64,22 @@ private class StockAxisValueFormatter(private val showValue: Boolean) : ValueFor
  * Each month is a group of 3 bars: current (end-of-month) inventory, incoming
  * stock, and outgoing stock. Each bar is itself stacked by product, one color
  * per product, consistent across all 3 categories. A toggle switches between
- * item counts and TWD value. Tapping any bar shows a numeric, per-product
- * breakdown at the top of the screen -- useful once the chart has enough
- * products/months to get visually crowded.
+ * item counts and TWD value.
+ *
+ * Each bar (column) is one clickable unit: tapping anywhere on it -- any
+ * product's segment -- shows every product's figure for that month/category
+ * in a titled, horizontally scrollable strip at the top of the screen. The
+ * product color legend at the bottom is also horizontally scrollable, so
+ * neither panel grows unboundedly as more products are added.
  */
 class StockChartActivity : AppCompatActivity() {
 
     private lateinit var barChart: BarChart
     private lateinit var toggleSwitch: Switch
     private lateinit var tvSwitchLabel: TextView
-    private lateinit var tvSelectionDetail: TextView
+    private lateinit var tvDetailTitle: TextView
+    private lateinit var llDetailChips: LinearLayout
+    private lateinit var llLegend: LinearLayout
 
     private var summary: MonthlySummaryResponse? = null
     private var itemColors: Map<Int, Int> = emptyMap()
@@ -78,16 +92,19 @@ class StockChartActivity : AppCompatActivity() {
         barChart = findViewById(R.id.barChartMonthly)
         toggleSwitch = findViewById(R.id.switchValueToggle)
         tvSwitchLabel = findViewById(R.id.tvSwitchLabel)
-        tvSelectionDetail = findViewById(R.id.tvSelectionDetail)
+        tvDetailTitle = findViewById(R.id.tvDetailTitle)
+        llDetailChips = findViewById(R.id.llDetailChips)
+        llLegend = findViewById(R.id.llLegend)
 
-        findViewById<android.widget.ImageView>(R.id.btnBack).setOnClickListener { finish() }
+        findViewById<ImageView>(R.id.btnBack).setOnClickListener { finish() }
 
         setUpChartAppearance()
 
         toggleSwitch.setOnCheckedChangeListener { _, isChecked ->
             showValue = isChecked
-            tvSwitchLabel.text = if (showValue) "顯示：金額 (TWD)" else "顯示：件數"
+            tvSwitchLabel.text = if (showValue) "顯示：金額 (TWD, 以千元 k 為單位)" else "顯示：件數"
             renderChart()
+            clearSelectionDetail()
         }
 
         loadMonthlySummary()
@@ -96,6 +113,7 @@ class StockChartActivity : AppCompatActivity() {
     private fun setUpChartAppearance() {
         barChart.apply {
             description.isEnabled = false
+            legend.isEnabled = false // using our own scrollable legend row instead
             setDragEnabled(true)
             setScaleEnabled(false)
             setPinchZoom(false)
@@ -105,7 +123,6 @@ class StockChartActivity : AppCompatActivity() {
             xAxis.position = XAxis.XAxisPosition.BOTTOM
             xAxis.granularity = 1f
             xAxis.setDrawGridLines(false)
-            legend.textSize = 11f
             setOnChartValueSelectedListener(object : OnChartValueSelectedListener {
                 override fun onValueSelected(e: Entry?, h: Highlight?) {
                     if (e is BarEntry && h != null) showSelectionDetail(e, h)
@@ -128,9 +145,7 @@ class StockChartActivity : AppCompatActivity() {
 
                 val body = response.body()
                 if (body == null || body.months.isEmpty()) {
-                    runOnUiThread {
-                        tvSelectionDetail.text = "目前尚無足夠的交易紀錄可供繪製圖表。"
-                    }
+                    runOnUiThread { tvDetailTitle.text = "目前尚無足夠的交易紀錄可供繪製圖表。" }
                     return
                 }
 
@@ -161,15 +176,47 @@ class StockChartActivity : AppCompatActivity() {
         return items.mapIndexed { index, item -> item.item_id to palette[index % palette.size] }.toMap()
     }
 
-    /** Builds a custom legend mapping each product's name to its chart color. */
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    /** A small rounded, bordered rect used as the background for both legend and detail chips. */
+    private fun chipBackground(): GradientDrawable = GradientDrawable().apply {
+        setColor(Color.parseColor("#F8F9FA"))
+        setStroke(dp(1), Color.parseColor("#E1E0D9"))
+        cornerRadius = dp(6).toFloat()
+    }
+
+    /** Populates the horizontally scrollable product legend row at the bottom of the screen. */
     private fun setUpLegend(items: List<MonthlySummaryItemInfo>) {
-        val entries = items.map { item ->
-            LegendEntry().apply {
-                label = item.item_name
-                formColor = itemColors[item.item_id] ?: Color.GRAY
+        llLegend.removeAllViews()
+        for (item in items) {
+            val color = itemColors[item.item_id] ?: Color.GRAY
+
+            val dot = View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(9), dp(9)).apply { rightMargin = dp(4); gravity = Gravity.CENTER_VERTICAL }
+                setBackgroundColor(color)
             }
+            val label = TextView(this).apply {
+                text = item.item_name
+                textSize = 12f
+                setTextColor(Color.parseColor("#495057"))
+            }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    rightMargin = dp(14)
+                }
+                addView(dot)
+                addView(label)
+            }
+            llLegend.addView(row)
         }
-        barChart.legend.setCustom(entries)
+    }
+
+    /** Clears the tap-detail panel back to its placeholder state (used when the display mode changes). */
+    private fun clearSelectionDetail() {
+        tvDetailTitle.text = "點擊任一長條圖，查看詳細數字"
+        llDetailChips.removeAllViews()
     }
 
     /** Rebuilds the grouped + stacked BarData from [summary] using the current [showValue] mode. */
@@ -227,7 +274,12 @@ class StockChartActivity : AppCompatActivity() {
         barChart.invalidate()
     }
 
-    /** Populates the top detail panel with a per-product breakdown for the tapped bar. */
+    /**
+     * Populates the top detail panel for a tapped column: a clear "<month> <category>"
+     * title, followed by every product's figure for that column as horizontally
+     * scrollable chips. The whole bar is treated as one clickable unit -- which
+     * specific product segment was tapped doesn't narrow the results.
+     */
     private fun showSelectionDetail(entry: BarEntry, highlight: Highlight) {
         val data = summary ?: return
         val monthIndex = entry.x.toInt()
@@ -241,28 +293,86 @@ class StockChartActivity : AppCompatActivity() {
             else -> ""
         }
 
-        val byItemId = monthData.items.associateBy { it.item_id }
-        val stackIndex = highlight.stackIndex
-        // A specific product segment was tapped -> show just that product; otherwise show all.
-        val itemsToShow = if (stackIndex in data.items.indices) listOf(data.items[stackIndex]) else data.items
+        val categoryTotalValue = monthData.items.sumOf { itemEntry ->
+            when (highlight.dataSetIndex) {
+                CATEGORY_INCOMING -> itemEntry.incoming_value
+                CATEGORY_OUTGOING -> itemEntry.outgoing_value
+                else -> itemEntry.ending_value
+            }
+        }
 
-        val sb = StringBuilder("$month　$categoryLabel\n")
-        for (item in itemsToShow) {
+        tvDetailTitle.text = if (showValue) {
+            "$month　$categoryLabel NT$ ${formatMoneyK(categoryTotalValue)}"
+        } else {
+            "$month　$categoryLabel"
+        }
+
+        val byItemId = monthData.items.associateBy { it.item_id }
+        llDetailChips.removeAllViews()
+
+        var shownCount = 0
+        for (item in data.items) {
             val itemEntry = byItemId[item.item_id] ?: continue
             val qty = when (highlight.dataSetIndex) {
                 CATEGORY_INCOMING -> itemEntry.incoming_qty
                 CATEGORY_OUTGOING -> itemEntry.outgoing_qty
                 else -> itemEntry.ending_qty
             }
+            if (qty == 0) continue // no activity/stock for this product in this category -> skip it
+
             val value = when (highlight.dataSetIndex) {
                 CATEGORY_INCOMING -> itemEntry.incoming_value
                 CATEGORY_OUTGOING -> itemEntry.outgoing_value
                 else -> itemEntry.ending_value
             }
             val figure = if (showValue) "NT$ ${formatMoneyK(value)}" else "$qty 件"
-            sb.append("${item.item_name}: $figure\n")
+            llDetailChips.addView(buildDetailChip(item.item_name, itemColors[item.item_id] ?: Color.GRAY, figure))
+            shownCount++
         }
 
-        tvSelectionDetail.text = sb.toString().trim()
+        if (shownCount == 0) {
+            llDetailChips.addView(TextView(this).apply {
+                text = "本項無資料"
+                textSize = 12f
+                setTextColor(Color.parseColor("#ADB5BD"))
+            })
+        }
+    }
+
+    /** Builds one small card showing a product's color dot, name, and figure, used in the detail panel. */
+    private fun buildDetailChip(name: String, color: Int, figure: String): LinearLayout {
+        val nameRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+
+            addView(View(this@StockChartActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(8), dp(8)).apply { rightMargin = dp(4) }
+                setBackgroundColor(color)
+            })
+            addView(TextView(this@StockChartActivity).apply {
+                text = name
+                textSize = 11f
+                setTextColor(Color.parseColor("#495057"))
+                maxLines = 1
+            })
+        }
+        val figureText = TextView(this).apply {
+            text = figure
+            textSize = 13f
+            setTextColor(Color.parseColor("#2A3B50"))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            maxLines = 1
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = chipBackground()
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                rightMargin = dp(8)
+            }
+            addView(nameRow)
+            addView(figureText)
+        }
     }
 }
