@@ -1,9 +1,8 @@
+package com.mingliu.inventoryapp
 import com.mingliu.inventoryapp.Product
 import com.mingliu.inventoryapp.R
 import com.mingliu.inventoryapp.RetrofitClient
 import com.mingliu.inventoryapp.StockValuationResponse
-
-ppackage com.mingliu.inventoryapp
 
 import android.content.Context
 import android.graphics.Color
@@ -237,4 +236,3 @@ class ValuationReportActivity : AppCompatActivity() {
     }
 }
 
-}

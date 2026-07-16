@@ -819,6 +819,8 @@ class HomeActivity : AppCompatActivity() {
 
         val edtName = EditText(context).apply {
             hint = "商品名稱"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.BLACK)
             prefill?.let { setText(it.item_name) }
         }
         val spinnerCategory = Spinner(context).apply {
@@ -829,16 +831,22 @@ class HomeActivity : AppCompatActivity() {
         }
         val edtUsdPrice = EditText(context).apply {
             hint = "採購幣別單價"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.BLACK)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.usd_price)?.let { v -> setText(v.toString()) } }
         }
         val edtRate = EditText(context).apply {
             hint = "匯率 (留空 = 使用全域匯率)"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.BLACK)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.exchange_rate)?.let { v -> setText(v.toString()) } }
         }
         val edtTax = EditText(context).apply {
             hint = "調整 factor (留空 = 使用全域 factor)"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.BLACK)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.tax_coefficient)?.let { v -> setText(v.toString()) } }
         }
@@ -962,7 +970,7 @@ class HomeActivity : AppCompatActivity() {
         val fields = buildItemFormFields(context, prefill = product)
 
         val dialog = AlertDialog.Builder(context)
-            .setTitle("編輯商品主檔")
+            .setTitle("更新商品資料")
             .setView(fields.container)
             .setPositiveButton("儲存變更", null) // overridden below so validation failures don't auto-dismiss
             .setNegativeButton("取消", null)

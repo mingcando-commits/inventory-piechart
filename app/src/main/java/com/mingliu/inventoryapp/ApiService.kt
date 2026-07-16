@@ -259,7 +259,7 @@ data class GlobalSettingsUpdateRequest(
 // ========================================================
 object RetrofitClient {
 
-    private const val BASE_URL = "https://inventoryapp-c6f7.onrender.com"
+    private const val BASE_URL = "https://inventoryapp-s3w2.onrender.com"
     private lateinit var appContext: Context
 
     fun initialize(context: Context) {
