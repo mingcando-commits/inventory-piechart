@@ -821,6 +821,8 @@ class HomeActivity : AppCompatActivity() {
             hint = "商品名稱"
             setHintTextColor(Color.GRAY)
             setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+            setPadding(30, 25, 30, 25)
             prefill?.let { setText(it.item_name) }
         }
         val spinnerCategory = Spinner(context).apply {
@@ -833,6 +835,8 @@ class HomeActivity : AppCompatActivity() {
             hint = "採購幣別單價"
             setHintTextColor(Color.GRAY)
             setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+            setPadding(30, 25, 30, 25)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.usd_price)?.let { v -> setText(v.toString()) } }
         }
@@ -840,6 +844,8 @@ class HomeActivity : AppCompatActivity() {
             hint = "匯率 (留空 = 使用全域匯率)"
             setHintTextColor(Color.GRAY)
             setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+            setPadding(30, 25, 30, 25)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.exchange_rate)?.let { v -> setText(v.toString()) } }
         }
@@ -847,14 +853,19 @@ class HomeActivity : AppCompatActivity() {
             hint = "調整 factor (留空 = 使用全域 factor)"
             setHintTextColor(Color.GRAY)
             setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+            setPadding(30, 25, 30, 25)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.tax_coefficient)?.let { v -> setText(v.toString()) } }
         }
 
         container.addView(edtName)
+        container.addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 20) })
         container.addView(spinnerCategory)
         container.addView(edtUsdPrice)
+        container.addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 20) })
         container.addView(edtRate)
+        container.addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 20) })
         container.addView(edtTax)
 
         return ItemFormFields(container, edtName, spinnerCategory, edtUsdPrice, edtRate, edtTax)
@@ -864,7 +875,7 @@ class HomeActivity : AppCompatActivity() {
         val context = this
         val fields = buildItemFormFields(context, prefill = null)
 
-        AlertDialog.Builder(context)
+        AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("建立全新商品主檔")
             .setView(fields.container)
             .setPositiveButton("建立") { _, _ ->
@@ -902,10 +913,12 @@ class HomeActivity : AppCompatActivity() {
     }
 
     /**
-     * Checks whether [product] has any transaction history, then shows an
-     * Edit/Delete menu -- Delete is disabled (grayed out, unclickable) if
-     * the item has at least one transaction, since deleting it would either
-     * fail server-side or orphan historical records.
+     * Entry point for the "⋯" button: fetches this item's transaction
+     * history (to decide whether Delete is allowed) and a fresh copy of
+     * the item's own data (name/category/price/rate/factor) before showing
+     * the edit form -- always re-fetched from the server rather than reusing
+     * the [product] passed in, since that may be a stale copy still held by
+     * the product list/adapter from before a previous edit was saved.
      */
     private fun showItemEditMenuDialog(product: Product) {
         RetrofitClient.instance.getItemHistory(product.item_id).enqueue(object : Callback<List<TransactionHistoryItem>> {
@@ -915,62 +928,56 @@ class HomeActivity : AppCompatActivity() {
                 } else {
                     true // couldn't verify -> be conservative and disable Delete
                 }
-                runOnUiThread { renderItemEditMenu(product, hasTransactions) }
+                fetchFreshProductThenShowEditForm(product, hasTransactions)
             }
 
             override fun onFailure(call: Call<List<TransactionHistoryItem>>, t: Throwable) {
                 Log.e(TAG, "Failed to check transaction history for item [${product.item_name}]: ${t.localizedMessage}")
-                runOnUiThread { renderItemEditMenu(product, hasTransactions = true) }
+                fetchFreshProductThenShowEditForm(product, hasTransactions = true)
             }
         })
     }
 
-    private fun renderItemEditMenu(product: Product, hasTransactions: Boolean) {
-        val context = this
-        val container = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    /** Re-fetches the current valuation list and picks out this item, so the edit form always opens with up-to-date values. */
+    private fun fetchFreshProductThenShowEditForm(fallback: Product, hasTransactions: Boolean) {
+        RetrofitClient.instance.getStockValuation().enqueue(object : Callback<StockValuationResponse> {
+            override fun onResponse(call: Call<StockValuationResponse>, response: Response<StockValuationResponse>) {
+                val fresh = response.body()?.details?.find { it.item_id == fallback.item_id } ?: fallback
+                runOnUiThread { showEditItemDialog(fresh, hasTransactions) }
+            }
 
-        val rowEdit = TextView(context).apply {
-            text = "編輯商品"
-            textSize = 15f
-            setTextColor(Color.parseColor("#2A3B50"))
-            setPadding(50, 30, 50, 30)
-        }
+            override fun onFailure(call: Call<StockValuationResponse>, t: Throwable) {
+                Log.e(TAG, "Failed to refresh item data before editing [${fallback.item_name}]: ${t.localizedMessage}")
+                runOnUiThread { showEditItemDialog(fallback, hasTransactions) }
+            }
+        })
+    }
+
+    /**
+     * Edit form for an existing item: name, category, price, rate, factor
+     * (never touches current_qty), plus a "刪除商品" action at the bottom --
+     * grayed out with an explanation if the item has any transaction history.
+     */
+    private fun showEditItemDialog(product: Product, hasTransactions: Boolean) {
+        val context = this
+        val fields = buildItemFormFields(context, prefill = product)
+
         val divider = View(context).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2)
-            setBackgroundColor(Color.parseColor("#E1E0D9"))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2).apply { topMargin = 30; bottomMargin = 10 }
+            setBackgroundColor(Color.parseColor("#495057"))
         }
         val rowDelete = TextView(context).apply {
             text = if (hasTransactions) "刪除商品\n(已有交易紀錄，無法刪除)" else "刪除商品"
             textSize = 15f
-            setTextColor(if (hasTransactions) Color.parseColor("#ADB5BD") else Color.parseColor("#DC3545"))
-            setPadding(50, 30, 50, 30)
+            gravity = Gravity.CENTER
+            setTextColor(if (hasTransactions) Color.parseColor("#6C757D") else Color.parseColor("#FF6B6B"))
+            setPadding(20, 20, 20, 20)
         }
+        fields.container.addView(divider)
+        fields.container.addView(rowDelete)
 
-        container.addView(rowEdit)
-        container.addView(divider)
-        container.addView(rowDelete)
-
-        val menuDialog = AlertDialog.Builder(context)
-            .setTitle(product.item_name)
-            .setView(container)
-            .setNegativeButton("取消", null)
-            .create()
-
-        rowEdit.setOnClickListener { menuDialog.dismiss(); showEditItemDialog(product) }
-        if (!hasTransactions) {
-            rowDelete.setOnClickListener { menuDialog.dismiss(); confirmAndDeleteItem(product) }
-        } // else: no click listener -> effectively disabled, matching the grayed-out styling above
-
-        menuDialog.show()
-    }
-
-    /** Edit form for an existing item: name, category, price, rate, factor. Never touches current_qty. */
-    private fun showEditItemDialog(product: Product) {
-        val context = this
-        val fields = buildItemFormFields(context, prefill = product)
-
-        val dialog = AlertDialog.Builder(context)
-            .setTitle("更新商品資料")
+        val dialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("更新商品資料: ${product.item_name}")
             .setView(fields.container)
             .setPositiveButton("儲存變更", null) // overridden below so validation failures don't auto-dismiss
             .setNegativeButton("取消", null)
@@ -997,6 +1004,10 @@ class HomeActivity : AppCompatActivity() {
             )
             dialog.dismiss()
         }
+
+        if (!hasTransactions) {
+            rowDelete.setOnClickListener { dialog.dismiss(); confirmAndDeleteItem(product) }
+        } // else: no click listener -> effectively disabled, matching the grayed-out styling above
     }
 
     private fun sendUpdateItemRequest(itemId: Int, name: String, cat: String, usd: Double, rate: Double?, tax: Double?) {
@@ -1153,14 +1164,14 @@ class HomeActivity : AppCompatActivity() {
             text = "庫存異動調整: ${product.item_name}"
             textSize = 16f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#212529"))
+            setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val btnEditMenu = TextView(context).apply {
             text = "⋯"
             textSize = 20f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#495057"))
+            setTextColor(Color.parseColor("#ADB5BD"))
             setPadding(20, 0, 10, 0)
             isClickable = true
             isFocusable = true
@@ -1169,8 +1180,8 @@ class HomeActivity : AppCompatActivity() {
         titleView.addView(btnEditMenu)
 
         val radioGroup = RadioGroup(context).apply { orientation = RadioGroup.HORIZONTAL; setPadding(0, 0, 0, 30) }
-        val radioIn = RadioButton(context).apply { text = "入庫"; id = RADIO_ID_STOCK_IN; isChecked = true; setTextColor(Color.BLACK) }
-        val radioOut = RadioButton(context).apply { text = "出庫"; id = RADIO_ID_STOCK_OUT; setTextColor(Color.BLACK) }
+        val radioIn = RadioButton(context).apply { text = "入庫"; id = RADIO_ID_STOCK_IN; isChecked = true; setTextColor(Color.WHITE) }
+        val radioOut = RadioButton(context).apply { text = "出庫"; id = RADIO_ID_STOCK_OUT; setTextColor(Color.WHITE) }
         radioGroup.addView(radioIn)
         radioGroup.addView(radioOut)
 
@@ -1178,15 +1189,20 @@ class HomeActivity : AppCompatActivity() {
             hint = "請輸入異動數量"
             setHintTextColor(Color.GRAY)
             setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+            setPadding(30, 25, 30, 25)
             inputType = InputType.TYPE_CLASS_NUMBER
         }
         val edtRemark = EditText(context).apply {
             hint = "請輸入備註說明"
             setHintTextColor(Color.GRAY)
             setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+            setPadding(30, 25, 30, 25)
         }
         container.addView(radioGroup)
         container.addView(edtQty)
+        container.addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 20) })
         container.addView(edtRemark)
 
         val btnHistory = Button(context).apply {
@@ -1197,7 +1213,7 @@ class HomeActivity : AppCompatActivity() {
         }
         container.addView(btnHistory)
 
-        val alertDialog = AlertDialog.Builder(context)
+        val alertDialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setCustomTitle(titleView)
             .setView(container)
             .setPositiveButton("確定送出", null) // overridden below so validation failures don't auto-dismiss
