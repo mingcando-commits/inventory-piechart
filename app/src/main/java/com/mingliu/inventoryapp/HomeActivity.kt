@@ -875,23 +875,45 @@ class HomeActivity : AppCompatActivity() {
         val context = this
         val fields = buildItemFormFields(context, prefill = null)
 
-        AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("建立全新商品主檔")
             .setView(fields.container)
-            .setPositiveButton("建立") { _, _ ->
-                val name = fields.edtName.text.toString().trim()
-                val usd = fields.edtUsdPrice.text.toString().trim()
-                if (name.isNotEmpty() && usd.isNotEmpty()) {
-                    sendCreateItemRequest(
-                        name,
-                        fields.spinnerCategory.selectedItem.toString(),
-                        usd.toDouble(),
-                        fields.edtRate.text.toString().trim().toDoubleOrNull(),
-                        fields.edtTax.text.toString().trim().toDoubleOrNull()
-                    )
-                }
-            }
+            .setPositiveButton("建立", null) // overridden below so validation failures don't auto-dismiss
             .setNegativeButton("取消", null)
+            .create()
+        dialog.show()
+
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val name = fields.edtName.text.toString().trim()
+            val usdText = fields.edtUsdPrice.text.toString().trim()
+
+            if (name.isEmpty()) {
+                showValidationAlert("請輸入商品名稱")
+                return@setOnClickListener
+            }
+            val usd = usdText.toDoubleOrNull()
+            if (usdText.isEmpty() || usd == null) {
+                showValidationAlert("請輸入採購幣別單價")
+                return@setOnClickListener
+            }
+
+            sendCreateItemRequest(
+                name,
+                fields.spinnerCategory.selectedItem.toString(),
+                usd,
+                fields.edtRate.text.toString().trim().toDoubleOrNull(),
+                fields.edtTax.text.toString().trim().toDoubleOrNull()
+            )
+            dialog.dismiss()
+        }
+    }
+
+    /** Blocking validation popup with a single OK button; the form dialog underneath stays open behind it. */
+    private fun showValidationAlert(message: String) {
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .setCancelable(false)
             .show()
     }
 
