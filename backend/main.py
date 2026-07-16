@@ -404,6 +404,26 @@ def get_items_by_category(category: str, conn=Depends(get_db_connection)):
         return cur.fetchall()
 
 
+@app.get("/api/items/{item_id}")
+def get_item(item_id: int, current_user=Depends(get_current_user), conn=Depends(get_db_connection)):
+    """Return a single item's current master data.
+
+    Lightweight compared to /api/stock/valuation (which returns every item) --
+    used to refresh the edit-item form with up-to-date values without paying
+    for the full list. exchange_rate/tax_coefficient are the item's raw
+    per-item override (null if it uses the global fallback).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT item_id, item_name, category, usd_price, exchange_rate, tax_coefficient FROM item_master WHERE item_id = %s",
+            (item_id,),
+        )
+        item = cur.fetchone()
+        if not item:
+            raise HTTPException(status_code=404, detail="找不到該 Item")
+        return item
+
+
 # ---------------------------------------------------------------------------
 # Global settings: fallback exchange rate / adjustment factor
 # ---------------------------------------------------------------------------

@@ -915,43 +915,64 @@ class HomeActivity : AppCompatActivity() {
     /**
      * Entry point for the "⋯" button: fetches this item's transaction
      * history (to decide whether Delete is allowed) and a fresh copy of
-     * the item's own data (name/category/price/rate/factor) before showing
-     * the edit form -- always re-fetched from the server rather than reusing
-     * the [product] passed in, since that may be a stale copy still held by
-     * the product list/adapter from before a previous edit was saved.
+     * the item's own data (name/category/price/rate/factor) -- both fired
+     * at once rather than one after another, so the wait is however long
+     * the slower of the two takes, not the sum of both. Item data is
+     * always re-fetched from the server rather than reusing the [product]
+     * passed in, since that may be a stale copy still held by the product
+     * list/adapter from before a previous edit was saved.
      */
     private fun showItemEditMenuDialog(product: Product) {
+        var hasTransactionsResult: Boolean? = null
+        var freshProductResult: Product? = null
+
+        // Retrofit's default Android callback executor delivers both callbacks on the
+        // main thread, so no locking is needed even though the two requests overlap.
+        fun tryShowFormOnceBothArrive() {
+            val hasTransactions = hasTransactionsResult ?: return
+            val fresh = freshProductResult ?: return
+            showEditItemDialog(fresh, hasTransactions)
+        }
+
         RetrofitClient.instance.getItemHistory(product.item_id).enqueue(object : Callback<List<TransactionHistoryItem>> {
             override fun onResponse(call: Call<List<TransactionHistoryItem>>, response: Response<List<TransactionHistoryItem>>) {
-                val hasTransactions = if (response.isSuccessful) {
+                hasTransactionsResult = if (response.isSuccessful) {
                     (response.body() ?: emptyList()).isNotEmpty()
                 } else {
                     true // couldn't verify -> be conservative and disable Delete
                 }
-                fetchFreshProductThenShowEditForm(product, hasTransactions)
+                tryShowFormOnceBothArrive()
             }
 
             override fun onFailure(call: Call<List<TransactionHistoryItem>>, t: Throwable) {
                 Log.e(TAG, "Failed to check transaction history for item [${product.item_name}]: ${t.localizedMessage}")
-                fetchFreshProductThenShowEditForm(product, hasTransactions = true)
+                hasTransactionsResult = true
+                tryShowFormOnceBothArrive()
+            }
+        })
+
+        RetrofitClient.instance.getItem(product.item_id).enqueue(object : Callback<ItemDetailResponse> {
+            override fun onResponse(call: Call<ItemDetailResponse>, response: Response<ItemDetailResponse>) {
+                freshProductResult = response.body()?.let { mergeFreshItemIntoProduct(product, it) } ?: product
+                tryShowFormOnceBothArrive()
+            }
+
+            override fun onFailure(call: Call<ItemDetailResponse>, t: Throwable) {
+                Log.e(TAG, "Failed to refresh item data before editing [${product.item_name}]: ${t.localizedMessage}")
+                freshProductResult = product
+                tryShowFormOnceBothArrive()
             }
         })
     }
 
-    /** Re-fetches the current valuation list and picks out this item, so the edit form always opens with up-to-date values. */
-    private fun fetchFreshProductThenShowEditForm(fallback: Product, hasTransactions: Boolean) {
-        RetrofitClient.instance.getStockValuation().enqueue(object : Callback<StockValuationResponse> {
-            override fun onResponse(call: Call<StockValuationResponse>, response: Response<StockValuationResponse>) {
-                val fresh = response.body()?.details?.find { it.item_id == fallback.item_id } ?: fallback
-                runOnUiThread { showEditItemDialog(fresh, hasTransactions) }
-            }
-
-            override fun onFailure(call: Call<StockValuationResponse>, t: Throwable) {
-                Log.e(TAG, "Failed to refresh item data before editing [${fallback.item_name}]: ${t.localizedMessage}")
-                runOnUiThread { showEditItemDialog(fallback, hasTransactions) }
-            }
-        })
-    }
+    /** Overlays a fresh single-item fetch onto a Product, keeping fields the lightweight endpoint doesn't return (e.g. current_qty) from [base]. */
+    private fun mergeFreshItemIntoProduct(base: Product, fresh: ItemDetailResponse): Product = base.copy(
+        item_name = fresh.item_name,
+        category = fresh.category,
+        usd_price = fresh.usd_price,
+        exchange_rate = fresh.exchange_rate,
+        tax_coefficient = fresh.tax_coefficient
+    )
 
     /**
      * Edit form for an existing item: name, category, price, rate, factor

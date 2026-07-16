@@ -48,6 +48,12 @@ interface ApiService {
         @Body request: ItemCreateRequest
     ): Call<ItemCreateResponse>
 
+    /** Lightweight single-item fetch (vs. the full valuation list) -- used to refresh the edit-item form. */
+    @GET("/api/items/{item_id}")
+    fun getItem(
+        @Path("item_id") itemId: Int
+    ): Call<ItemDetailResponse>
+
     /** Updates an existing item's master data (name, category, price, rate, factor). Never touches current_qty. */
     @PUT("/api/items/{item_id}")
     fun updateItem(
@@ -167,6 +173,16 @@ data class ItemCreateResponse(
     val item_id: Int
 )
 
+/** Response for GET /api/items/{item_id} -- a lightweight single-item fetch used to refresh the edit form. */
+data class ItemDetailResponse(
+    val item_id: Int,
+    val item_name: String,
+    val category: String,
+    val usd_price: Any,
+    val exchange_rate: Any?,
+    val tax_coefficient: Any?
+)
+
 data class TransactionHistoryItem(
     val transaction_date: String,
     val transaction_time: String,
@@ -259,7 +275,7 @@ data class GlobalSettingsUpdateRequest(
 // ========================================================
 object RetrofitClient {
 
-    private const val BASE_URL = "https://inventoryapp-s3w2.onrender.com"
+    private const val BASE_URL = "https://inventoryapp-c6f7.onrender.com"
     private lateinit var appContext: Context
 
     fun initialize(context: Context) {
