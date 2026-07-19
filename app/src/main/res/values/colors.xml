@@ -2,4 +2,34 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- Brand -->
+    <color name="color_primary">#2A3B50</color>
+    <color name="color_on_primary">#FFFFFF</color>
+    <color name="color_primary_container">#D3DCE6</color>
+    <color name="color_on_primary_container">#101C2B</color>
+
+    <color name="color_secondary">#4A5D75</color>
+    <color name="color_on_secondary">#FFFFFF</color>
+    <color name="color_secondary_container">#DDE4EC</color>
+    <color name="color_on_secondary_container">#131F2D</color>
+
+    <!-- Surfaces -->
+    <color name="color_surface">#F8F9FA</color>
+    <color name="color_on_surface">#1A1C1E</color>
+    <color name="color_on_surface_variant">#495057</color>
+    <color name="color_surface_container_low">#FFFFFF</color>
+    <color name="color_surface_container">#F1F3F5</color>
+    <color name="color_surface_container_high">#E9ECEF</color>
+    <color name="color_outline">#C7CCD1</color>
+    <color name="color_outline_variant">#E1E0D9</color>
+
+    <!-- Status -->
+    <color name="color_error">#DC3545</color>
+    <color name="color_on_error">#FFFFFF</color>
+
+    <!-- Domain-specific semantic colors (not Material roles, used directly) -->
+    <color name="color_success">#1D9E75</color>
+    <color name="color_danger">#DC3545</color>
+    <color name="color_global_badge">#ADB5BD</color>
 </resources>

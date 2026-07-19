@@ -2,16 +2,15 @@ package com.mingliu.inventoryapp
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
-import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.google.android.material.button.MaterialButton
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "MainActivity"
@@ -31,15 +30,16 @@ class MainActivity : AppCompatActivity() {
 
         val edtUser = findViewById<EditText>(findResourceId("etUsername", "username_edt", "username"))
         val edtPass = findViewById<EditText>(findResourceId("etPassword", "password_edt", "password"))
-        val btnLogin = findViewById<Button>(findResourceId("btnLogin", "login_btn", "button_login"))
+        val btnLogin = findViewById<MaterialButton>(findResourceId("btnLogin", "login_btn", "button_login"))
 
         if (edtUser == null || edtPass == null || btnLogin == null) {
             Log.e(TAG, "Login view lookup failed: one or more expected view IDs are missing from the layout")
             Toast.makeText(this, "介面初始化失敗，請檢查 XML ID", Toast.LENGTH_LONG).show()
             return
         }
-        edtUser.setTextColor(Color.parseColor("#000000"))
-        edtPass.setTextColor(Color.parseColor("#000000"))
+        // Text color intentionally left to the theme (TextInputEditText follows
+        // colorOnSurface automatically) -- hardcoding black here would make text
+        // unreadable in dark mode, which is exactly the bug class this pass fixes.
 
         btnLogin.setOnClickListener {
             val username = edtUser.text.toString().trim()

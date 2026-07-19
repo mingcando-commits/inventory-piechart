@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same color names as values/colors.xml. Android picks this file
+         automatically when the device is in dark mode. This is what makes
+         dialogs/screens adapt correctly without any hardcoded overrides. -->
+
+    <!-- Brand -->
+    <color name="color_primary">#A9C2DE</color>
+    <color name="color_on_primary">#0D1B2A</color>
+    <color name="color_primary_container">#2A3B50</color>
+    <color name="color_on_primary_container">#D3DCE6</color>
+
+    <color name="color_secondary">#B0BAC7</color>
+    <color name="color_on_secondary">#1B2733</color>
+    <color name="color_secondary_container">#34404D</color>
+    <color name="color_on_secondary_container">#DDE4EC</color>
+
+    <!-- Surfaces -->
+    <color name="color_surface">#121417</color>
+    <color name="color_on_surface">#E2E2E5</color>
+    <color name="color_on_surface_variant">#C7CCD1</color>
+    <color name="color_surface_container_low">#1D2024</color>
+    <color name="color_surface_container">#24272B</color>
+    <color name="color_surface_container_high">#2E3236</color>
+    <color name="color_outline">#8A9199</color>
+    <color name="color_outline_variant">#495057</color>
+
+    <!-- Status -->
+    <color name="color_error">#FF6B6B</color>
+    <color name="color_on_error">#4A0E0E</color>
+
+    <!-- Domain-specific semantic colors -->
+    <color name="color_success">#4CC9A0</color>
+    <color name="color_danger">#FF6B6B</color>
+    <color name="color_global_badge">#8A9199</color>
+</resources>

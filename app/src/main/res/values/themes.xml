@@ -1,8 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
+
+    <!-- Rounded corners for dialogs, applied via materialAlertDialogTheme below.
+         Centralizing this means every dialog in the app gets the same shape
+         automatically, instead of each one setting its own AlertDialog style. -->
+    <style name="ShapeAppearanceOverlay.InventoryApp.Dialog" parent="">
+        <item name="cornerSize">16dp</item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay.InventoryApp.Card" parent="">
+        <item name="cornerSize">12dp</item>
+    </style>
+
+    <!-- All MaterialAlertDialogBuilder dialogs in the app pick up this theme
+         automatically via materialAlertDialogTheme on the app theme below.
+         No per-dialog color overrides needed, which is what caused the
+         invisible-text bug earlier (colors that assumed a light background,
+         used inside a dialog that was actually following dark mode). -->
+    <style name="ThemeOverlay.InventoryApp.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="colorPrimary">@color/color_primary</item>
+        <item name="colorSurface">@color/color_surface_container_low</item>
+        <item name="colorOnSurface">@color/color_on_surface</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.InventoryApp.Dialog</item>
+    </style>
+
     <style name="Base.Theme.InventoryApp" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+        <item name="colorPrimary">@color/color_primary</item>
+        <item name="colorOnPrimary">@color/color_on_primary</item>
+        <item name="colorPrimaryContainer">@color/color_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/color_on_primary_container</item>
+
+        <item name="colorSecondary">@color/color_secondary</item>
+        <item name="colorOnSecondary">@color/color_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/color_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/color_on_secondary_container</item>
+
+        <item name="colorSurface">@color/color_surface</item>
+        <item name="colorOnSurface">@color/color_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/color_on_surface_variant</item>
+        <item name="colorOutline">@color/color_outline</item>
+        <item name="colorOutlineVariant">@color/color_outline_variant</item>
+
+        <item name="colorError">@color/color_error</item>
+        <item name="colorOnError">@color/color_on_error</item>
+
+        <item name="android:windowBackground">@color/color_surface</item>
+        <item name="android:statusBarColor">@color/color_primary</item>
+
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.InventoryApp.Dialog</item>
+        <item name="materialCardViewStyle">@style/Widget.InventoryApp.CardView</item>
+    </style>
+
+    <style name="Widget.InventoryApp.CardView" parent="Widget.Material3.CardView.Elevated">
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.InventoryApp.Card</item>
+        <item name="cardElevation">2dp</item>
+        <item name="cardBackgroundColor">@color/color_surface_container_low</item>
     </style>
 
     <style name="Theme.InventoryApp" parent="Base.Theme.InventoryApp" />
