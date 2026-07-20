@@ -1,11 +1,13 @@
 package com.mingliu.inventoryapp
 
-import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.R as MaterialR
+import com.google.android.material.color.MaterialColors
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -42,10 +44,14 @@ class ProductAdapter(
         holder.tvProductName.text = product.item_name
         holder.tvCategory.text = product.category
 
-        // Highlight low stock in red so it's easy to spot at a glance.
+        // Highlight low stock so it's easy to spot at a glance. Colors are
+        // resolved from the theme/resources (not hardcoded) so this adapts
+        // correctly between light and dark mode.
+        val dangerColor = ContextCompat.getColor(holder.itemView.context, R.color.color_danger)
+        val normalColor = MaterialColors.getColor(holder.itemView, MaterialR.attr.colorOnSurfaceVariant)
         holder.tvProductStock.text = "庫存: ${product.current_qty} 件"
         holder.tvProductStock.setTextColor(
-            if (product.current_qty <= LOW_STOCK_THRESHOLD) Color.parseColor("#DC3545") else Color.parseColor("#495057")
+            if (product.current_qty <= LOW_STOCK_THRESHOLD) dangerColor else normalColor
         )
 
         // twd_amount arrives as either a Number or a numeric String depending on the JSON source.

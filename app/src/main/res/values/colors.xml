@@ -32,4 +32,15 @@
     <color name="color_success">#1D9E75</color>
     <color name="color_danger">#DC3545</color>
     <color name="color_global_badge">#ADB5BD</color>
+
+    <!-- Fixed brand navy: intentionally NOT overridden in values-night, so it
+         stays the same navy in both light and dark mode. Used for chrome that
+         should read as "this app's brand color" regardless of theme (top bar,
+         FAB, the valuation highlight card). This is NOT the same thing as the
+         adaptive colorPrimary role, which Material3 deliberately flips to a
+         light tone in dark mode for text/icon contrast, not for backgrounds. -->
+    <color name="color_brand_navy">#2A3B50</color>
+    <color name="color_on_brand_navy">#FFFFFF</color>
+    <color name="color_on_brand_navy_variant">#A0B2C6</color>
+    <color name="color_brand_navy_divider">#3D526E</color>
 </resources>

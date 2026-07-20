@@ -3,17 +3,24 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F8F9FA">
+    android:background="?attr/colorSurface">
 
+    <!-- Top bar, the valuation card, and the FAB all use the fixed
+         color_brand_navy family (not the adaptive colorPrimary role).
+         They're meant to read as "this app's brand color" the same way in
+         both light and dark mode. colorPrimary is intentionally reserved for
+         adaptive text/icon use elsewhere, since Material3 flips its tone in
+         dark mode for contrast. Using it as a large background fill here
+         made this whole area turn pale blue in dark mode instead of staying navy. -->
     <RelativeLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:minHeight="64dp"
-        android:background="#2A3B50"
+        android:background="@color/color_brand_navy"
         android:paddingHorizontal="16dp"
         android:translationZ="10dp"
-        android:elevation="8dp">
+        android:elevation="@dimen/elevation_top_bar">
 
         <TextView
             android:id="@+id/tvTitle"
@@ -21,7 +28,7 @@
             android:layout_height="wrap_content"
             android:layout_centerVertical="true"
             android:text="📦 雲端進銷存管理系統"
-            android:textColor="#FFFFFF"
+            android:textColor="@color/color_on_brand_navy"
             android:textSize="18sp"
             android:textStyle="bold" />
 
@@ -32,9 +39,8 @@
             android:layout_alignParentEnd="true"
             android:layout_centerVertical="true"
             android:padding="10dp"
-            android:src="@android:drawable/ic_menu_manage"
-            android:tint="#FFFFFF"
-            app:tint="#FFFFFF"
+            android:src="@drawable/ic_settings"
+            app:tint="@color/color_on_brand_navy"
             android:translationZ="12dp"
             android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="設定"
@@ -49,13 +55,16 @@
         android:layout_below="@id/topBar"
         android:orientation="vertical">
 
-        <androidx.cardview.widget.CardView
+        <!-- Brand-colored highlight card (intentionally overrides the default
+             neutral card style below, since this is the one number on the
+             screen that should stand out). -->
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_margin="16dp"
-            app:cardCornerRadius="16dp"
+            app:cardCornerRadius="@dimen/corner_radius_card"
             app:cardElevation="6dp"
-            app:cardBackgroundColor="#2A3B50">
+            app:cardBackgroundColor="@color/color_brand_navy">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -67,7 +76,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="📊 當前庫存資產總估值 (TWD)"
-                    android:textColor="#A0B2C6"
+                    android:textColor="@color/color_on_brand_navy_variant"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
@@ -77,7 +86,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="$ 0.00"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/color_on_brand_navy"
                     android:textSize="32sp"
                     android:textStyle="bold" />
 
@@ -86,16 +95,16 @@
                     android:layout_height="1dp"
                     android:layout_marginTop="16dp"
                     android:layout_marginBottom="8dp"
-                    android:background="#3D526E" />
+                    android:background="@color/color_brand_navy_divider" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="⚡ 系統狀態：後端連線正常"
-                    android:textColor="#81C784"
+                    android:textColor="@color/color_success"
                     android:textSize="12sp" />
             </LinearLayout>
-        </androidx.cardview.widget.CardView>
+        </com.google.android.material.card.MaterialCardView>
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rvProducts"
@@ -114,9 +123,9 @@
         android:layout_alignParentEnd="true"
         android:layout_alignParentBottom="true"
         android:layout_margin="24dp"
-        android:src="@android:drawable/ic_input_add"
-        app:backgroundTint="#2A3B50"
-        app:tint="#FFFFFF"
+        android:src="@drawable/ic_add"
+        app:backgroundTint="@color/color_brand_navy"
+        app:tint="@color/color_on_brand_navy"
         android:contentDescription="新增商品主檔" />
 
 </RelativeLayout>

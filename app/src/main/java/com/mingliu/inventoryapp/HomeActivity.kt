@@ -2,7 +2,6 @@ package com.mingliu.inventoryapp
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.Editable
@@ -13,7 +12,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
-import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageView
@@ -27,10 +25,13 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import okhttp3.ResponseBody
 import retrofit2.Call
@@ -80,6 +81,7 @@ class HomeActivity : AppCompatActivity() {
     private var currentOpName: String = ""
 
     private var currentRawProductList: List<Product> = emptyList()
+    private var currentDisplayedList: List<Product> = emptyList()
     private var savedSortCriteria: String = "ID_ASC"
 
     // =====================================================================
@@ -137,8 +139,8 @@ class HomeActivity : AppCompatActivity() {
         if (titleId != 0) {
             findViewById<TextView>(titleId)?.apply {
                 val role = if (currentUserIsAdmin) "管理員 Admin" else "純檢視 Operator"
-                setTextColor(Color.parseColor("#FFFFFF"))
-                text = "雲端雲倉進銷存管理系統\n（當前登入者：$currentOpName / $role）"
+                setTextColor(ContextCompat.getColor(this@HomeActivity, R.color.color_on_brand_navy))
+                text = "雲端進銷存管理系統\n（當前登入者：$currentOpName / $role）"
                 textSize = 13f
             }
         }
@@ -165,10 +167,10 @@ class HomeActivity : AppCompatActivity() {
 
         val searchEditText = EditText(this).apply {
             hint = "輸入關鍵字模糊篩選商品名稱..."
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.BLACK)
+            setHintTextColor(ContextCompat.getColor(this@HomeActivity, R.color.color_on_surface_variant))
+            setTextColor(ContextCompat.getColor(this@HomeActivity, R.color.color_on_surface))
             textSize = 14f
-            setBackgroundResource(android.R.drawable.edit_text)
+            setBackgroundResource(R.drawable.bg_search_box)
             setPadding(40, 30, 40, 30)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(40, 20, 40, 10)
@@ -195,8 +197,14 @@ class HomeActivity : AppCompatActivity() {
     // Data loading & sorting
     // =====================================================================
 
-    /** Fetches the current stock valuation and refreshes the list + total. */
-    private fun loadStockData() {
+    /**
+     * Fetches the current stock valuation and refreshes the list + total.
+     * If [scrollToItemId] is given (e.g. right after completing a stock
+     * in/out transaction), the list scrolls so that item sits at the top --
+     * otherwise, with a long product list, the user has to hunt back through
+     * a default-sorted list just to confirm the new quantity looks right.
+     */
+    private fun loadStockData(scrollToItemId: Int? = null) {
         RetrofitClient.instance.getStockValuation().enqueue(object : Callback<StockValuationResponse> {
             override fun onResponse(call: Call<StockValuationResponse>, response: Response<StockValuationResponse>) {
                 if (response.isSuccessful) {
@@ -208,6 +216,7 @@ class HomeActivity : AppCompatActivity() {
                         val formatter = NumberFormat.getCurrencyInstance(Locale.US)
                         tvTotalValuation.text = formatter.format(totalTwdAmount).replace("$", "$ ")
                         applySortingAndRender()
+                        if (scrollToItemId != null) scrollToItem(scrollToItemId)
                     }
                 } else {
                     Log.e(TAG, "Failed to load stock valuation: HTTP ${response.code()}")
@@ -218,6 +227,14 @@ class HomeActivity : AppCompatActivity() {
                 Log.e(TAG, "Network error while loading stock valuation: ${t.localizedMessage}")
             }
         })
+    }
+
+    /** Scrolls the list so [itemId] is the first visible row, if it's currently displayed. */
+    private fun scrollToItem(itemId: Int) {
+        val index = currentDisplayedList.indexOfFirst { it.item_id == itemId }
+        if (index >= 0) {
+            (recyclerView.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(index, 0)
+        }
     }
 
     /** Re-renders the list using the full, unfiltered product set. */
@@ -232,6 +249,7 @@ class HomeActivity : AppCompatActivity() {
     private fun applySortingAndRenderWithList(targetList: List<Product>) {
         if (targetList.isEmpty() && currentRawProductList.isNotEmpty()) {
             // Search yielded no matches: show an empty list instead of crashing on a null adapter.
+            currentDisplayedList = emptyList()
             recyclerView.adapter = ProductAdapter(emptyList()) { _ -> }
             return
         }
@@ -246,6 +264,7 @@ class HomeActivity : AppCompatActivity() {
             else -> targetList
         }
 
+        currentDisplayedList = sortedList
         recyclerView.adapter = ProductAdapter(sortedList) { product -> showTransactionDialog(product) }
     }
 
@@ -257,7 +276,7 @@ class HomeActivity : AppCompatActivity() {
     private fun showAdminMenuDialog() {
         val options = if (currentUserIsAdmin) {
             arrayOf(
-                "人員權限與名冊維護", "變更個人或人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表",
+                "人員權限與名冊維護", "變更人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表",
                 "全域匯率及調整 factor 維護", "當前資產估值查詢", "登出系統，安全退出"
             )
         } else {
@@ -267,7 +286,7 @@ class HomeActivity : AppCompatActivity() {
             )
         }
 
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("系統後台管理中心")
             .setItems(options) { dialog, which ->
                 when (which) {
@@ -327,7 +346,7 @@ class HomeActivity : AppCompatActivity() {
             else -> 1
         }
 
-        AlertDialog.Builder(context)
+        MaterialAlertDialogBuilder(context)
             .setTitle("設定主頁商品庫存展示排序")
             .setSingleChoiceItems(criteriaOptions, checkedItem) { dialog, which ->
                 val newCriteria = when (which) {
@@ -394,7 +413,7 @@ class HomeActivity : AppCompatActivity() {
             if (myRealId == -1) {
                 Log.e(TAG, "Missing cached operator ID; blocking password change request")
                 runOnUiThread {
-                    AlertDialog.Builder(this@HomeActivity).apply {
+                    MaterialAlertDialogBuilder(this@HomeActivity).apply {
                         setTitle("憑證讀取失敗")
                         setMessage("系統無法在本地硬碟安全查驗您的個人編號 (ID)。\n\n為了保障資安，本次變更請求已被強制攔截。請嘗試重新登入系統以重新初始化憑證！")
                         setCancelable(false)
@@ -422,9 +441,9 @@ class HomeActivity : AppCompatActivity() {
         }
 
         val txtNotice = TextView(context).apply {
-            text = "安全防呆提示：\n為避免小螢幕按錯字母，密碼欄位已解除星號隱藏，將以明文顯示。"
+            text = "安全提示：\n為避免小螢幕按錯字母，密碼欄位已解除星號隱藏，將以明文顯示。"
             textSize = 12f
-            setTextColor(Color.parseColor("#D3D3D3"))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
             setPadding(0, 0, 0, 20)
         }
         container.addView(txtNotice)
@@ -436,7 +455,7 @@ class HomeActivity : AppCompatActivity() {
             val txtSelectTitle = TextView(context).apply {
                 text = "請選擇要變更密碼的人員："
                 textSize = 13f
-                setTextColor(Color.parseColor("#FFFFFF"))
+                setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
                 setPadding(0, 10, 0, 10)
             }
             container.addView(txtSelectTitle)
@@ -469,7 +488,7 @@ class HomeActivity : AppCompatActivity() {
             val txtUserSelf = TextView(context).apply {
                 text = "目前登入帳號：$currentOpName (普通操作員)\n"
                 textSize = 14f
-                setTextColor(Color.parseColor("#FFFFFF"))
+                setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
                 setPadding(0, 0, 0, 20)
             }
             container.addView(txtUserSelf)
@@ -477,9 +496,9 @@ class HomeActivity : AppCompatActivity() {
 
         fun plainTextField(hintText: String) = EditText(context).apply {
             hint = hintText
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.WHITE)
+            setHintTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.color_surface_container_low))
             setPadding(30, 25, 30, 25)
             textSize = 14f
             inputType = InputType.TYPE_CLASS_TEXT
@@ -492,7 +511,7 @@ class HomeActivity : AppCompatActivity() {
         val edtNewPassword = plainTextField("請輸入要變更的新密碼")
         container.addView(edtNewPassword)
 
-        val dialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle("變更個人或人員密碼")
             .setView(container)
             .setPositiveButton("確定變更", null) // overridden below so validation failures don't auto-dismiss
@@ -530,7 +549,7 @@ class HomeActivity : AppCompatActivity() {
             override fun onResponse(call: Call<ResponseBody>, response: Response<ResponseBody>) {
                 runOnUiThread {
                     if (response.isSuccessful) {
-                        AlertDialog.Builder(this@HomeActivity).apply {
+                        MaterialAlertDialogBuilder(this@HomeActivity).apply {
                             setTitle("密碼變更成功")
                             setMessage("人員 [$name] 的密碼已順利覆寫完成！\n\n點擊確定後，如果修改的是目前登入帳號，系統將自動登出以策安全。")
                             setCancelable(false)
@@ -549,7 +568,7 @@ class HomeActivity : AppCompatActivity() {
                             500 -> "伺服器內部錯誤！"
                             else -> "未知的網路安全阻斷。"
                         }
-                        AlertDialog.Builder(this@HomeActivity).apply {
+                        MaterialAlertDialogBuilder(this@HomeActivity).apply {
                             setTitle("密碼變更失敗")
                             setMessage("無法變更人員 [$name] 的密碼。\n\n後端拒絕原因：$errorDetail\n(錯誤代碼: $errorCode)")
                             setCancelable(false)
@@ -562,7 +581,7 @@ class HomeActivity : AppCompatActivity() {
 
             override fun onFailure(call: Call<ResponseBody>, t: Throwable) {
                 runOnUiThread {
-                    AlertDialog.Builder(this@HomeActivity).apply {
+                    MaterialAlertDialogBuilder(this@HomeActivity).apply {
                         setTitle("網路連線失敗")
                         setMessage("網路郵包未能送達伺服器！\n\n請檢查您的 Wi-Fi 連線或後端 FastAPI 服務是否正常運作。\n原因: ${t.localizedMessage}")
                         setCancelable(false)
@@ -600,7 +619,7 @@ class HomeActivity : AppCompatActivity() {
 
         if (!currentUserIsAdmin) {
             runOnUiThread {
-                AlertDialog.Builder(context).apply {
+                MaterialAlertDialogBuilder(context).apply {
                     setTitle("權限攔截")
                     setMessage("「人員權限與名冊維護」屬於高階管理員 (Admin) 核心主檔特權。\n\n普通操作人員 (Operator) 僅具備進出庫異動權限，無法存取此模組。")
                     setCancelable(false)
@@ -612,10 +631,8 @@ class HomeActivity : AppCompatActivity() {
         }
 
         val container = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(60, 40, 60, 40) }
-        val btnAddNewOp = Button(context).apply {
+        val btnAddNewOp = MaterialButton(context).apply {
             text = "建立全新 Operator 人員帳號"
-            setBackgroundColor(Color.parseColor("#2A3B50"))
-            setTextColor(Color.WHITE)
         }
         container.addView(btnAddNewOp)
 
@@ -623,7 +640,7 @@ class HomeActivity : AppCompatActivity() {
             text = "\n現有人員名冊管理："
             setTypeface(Typeface.DEFAULT_BOLD)
             textSize = 14f
-            setTextColor(Color.parseColor("#FFFFFF"))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
         }
         container.addView(txtTitle)
 
@@ -632,12 +649,14 @@ class HomeActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 400).apply { topMargin = 10 }
         }
         val listContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        listContainer.addView(TextView(context).apply { text = "正在向伺服器索取人員名冊中..."; setTextColor(Color.parseColor("#FFFFFF")) })
+        listContainer.addView(TextView(context).apply {
+            text = "正在向伺服器索取人員名冊中..."
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+        })
         scrollView.addView(listContainer)
         container.addView(scrollView)
 
-        // Theme forces a dark dialog regardless of the device's light/dark mode setting.
-        val dialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle("人員權限控制台")
             .setView(container)
             .setNegativeButton("關閉退出", null)
@@ -651,7 +670,7 @@ class HomeActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!response.isSuccessful) {
                         dialog.dismiss()
-                        AlertDialog.Builder(context).apply {
+                        MaterialAlertDialogBuilder(context).apply {
                             setTitle("索取名冊失敗")
                             setMessage("無法讀取人員名冊 (代碼: ${response.code()})。\n\n原因：伺服器拒絕了本次請求，請確認您具備管理員權限。")
                             setCancelable(false)
@@ -665,7 +684,10 @@ class HomeActivity : AppCompatActivity() {
                     listContainer.removeAllViews()
 
                     if (opList.isEmpty()) {
-                        listContainer.addView(TextView(context).apply { text = "目前系統無現有人員。"; setTextColor(Color.WHITE) })
+                        listContainer.addView(TextView(context).apply {
+                            text = "目前系統無現有人員。"
+                            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+                        })
                         return@runOnUiThread
                     }
 
@@ -681,23 +703,22 @@ class HomeActivity : AppCompatActivity() {
                             text = "• ${op.operator_name} ($role)"
                             textSize = 14f
                             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                            setTextColor(Color.parseColor("#FFFFFF"))
+                            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
                         }
                         row.addView(txtOpInfo)
 
                         if (!op.is_admin) {
-                            val btnDelete = Button(context).apply {
+                            val btnDelete = MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                                 text = "刪除"
-                                setBackgroundColor(Color.parseColor("#DC3545"))
-                                setTextColor(Color.WHITE)
+                                setTextColor(ContextCompat.getColor(context, R.color.color_danger))
+                                strokeColor = ContextCompat.getColorStateList(context, R.color.color_danger)
                                 textSize = 12f
-                                setPadding(20, 0, 20, 0)
                                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                                     leftMargin = 10
                                 }
                             }
                             btnDelete.setOnClickListener {
-                                AlertDialog.Builder(context)
+                                MaterialAlertDialogBuilder(context)
                                     .setTitle("刪除確認")
                                     .setMessage("您確定要將人員 [${op.operator_name}] 從系統中徹底刪除嗎？")
                                     .setPositiveButton("確定刪除") { _, _ -> dialog.dismiss(); sendDeleteOperatorRequest(op.operator_id, op.operator_name) }
@@ -708,7 +729,7 @@ class HomeActivity : AppCompatActivity() {
                         } else {
                             row.addView(TextView(context).apply {
                                 text = "系統保護"
-                                setTextColor(Color.parseColor("#D3D3D3"))
+                                setTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
                                 textSize = 12f
                                 setPadding(15, 5, 15, 5)
                             })
@@ -721,7 +742,7 @@ class HomeActivity : AppCompatActivity() {
             override fun onFailure(call: Call<List<OperatorResponse>>, t: Throwable) {
                 runOnUiThread {
                     dialog.dismiss()
-                    AlertDialog.Builder(context).apply {
+                    MaterialAlertDialogBuilder(context).apply {
                         setTitle("網路連線失敗")
                         setMessage("無法連線至進銷存伺服器，名冊索取失敗！\n原因: ${t.localizedMessage}")
                         setCancelable(false)
@@ -763,7 +784,7 @@ class HomeActivity : AppCompatActivity() {
         layout.addView(edtPassword)
         layout.addView(cbIsAdmin)
 
-        AlertDialog.Builder(context)
+        MaterialAlertDialogBuilder(context)
             .setTitle("建立人員帳號")
             .setView(layout)
             .setPositiveButton("確定建立") { _, _ ->
@@ -819,9 +840,9 @@ class HomeActivity : AppCompatActivity() {
 
         val edtName = EditText(context).apply {
             hint = "商品名稱"
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.WHITE)
+            setHintTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.color_surface_container_low))
             setPadding(30, 25, 30, 25)
             prefill?.let { setText(it.item_name) }
         }
@@ -833,27 +854,27 @@ class HomeActivity : AppCompatActivity() {
         }
         val edtUsdPrice = EditText(context).apply {
             hint = "採購幣別單價"
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.WHITE)
+            setHintTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.color_surface_container_low))
             setPadding(30, 25, 30, 25)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.usd_price)?.let { v -> setText(v.toString()) } }
         }
         val edtRate = EditText(context).apply {
             hint = "匯率 (留空 = 使用全域匯率)"
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.WHITE)
+            setHintTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.color_surface_container_low))
             setPadding(30, 25, 30, 25)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.exchange_rate)?.let { v -> setText(v.toString()) } }
         }
         val edtTax = EditText(context).apply {
             hint = "調整 factor (留空 = 使用全域 factor)"
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.WHITE)
+            setHintTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.color_surface_container_low))
             setPadding(30, 25, 30, 25)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             prefill?.let { anyToDoubleOrNull(it.tax_coefficient)?.let { v -> setText(v.toString()) } }
@@ -875,7 +896,7 @@ class HomeActivity : AppCompatActivity() {
         val context = this
         val fields = buildItemFormFields(context, prefill = null)
 
-        val dialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle("建立全新商品主檔")
             .setView(fields.container)
             .setPositiveButton("建立", null) // overridden below so validation failures don't auto-dismiss
@@ -910,7 +931,7 @@ class HomeActivity : AppCompatActivity() {
 
     /** Blocking validation popup with a single OK button; the form dialog underneath stays open behind it. */
     private fun showValidationAlert(message: String) {
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        MaterialAlertDialogBuilder(this)
             .setMessage(message)
             .setPositiveButton("OK", null)
             .setCancelable(false)
@@ -1007,19 +1028,21 @@ class HomeActivity : AppCompatActivity() {
 
         val divider = View(context).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2).apply { topMargin = 30; bottomMargin = 10 }
-            setBackgroundColor(Color.parseColor("#495057"))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.color_outline_variant))
         }
         val rowDelete = TextView(context).apply {
             text = if (hasTransactions) "刪除商品\n(已有交易紀錄，無法刪除)" else "刪除商品"
             textSize = 15f
             gravity = Gravity.CENTER
-            setTextColor(if (hasTransactions) Color.parseColor("#6C757D") else Color.parseColor("#FF6B6B"))
+            setTextColor(
+                ContextCompat.getColor(context, if (hasTransactions) R.color.color_on_surface_variant else R.color.color_danger)
+            )
             setPadding(20, 20, 20, 20)
         }
         fields.container.addView(divider)
         fields.container.addView(rowDelete)
 
-        val dialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle("更新商品資料: ${product.item_name}")
             .setView(fields.container)
             .setPositiveButton("儲存變更", null) // overridden below so validation failures don't auto-dismiss
@@ -1074,7 +1097,7 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun confirmAndDeleteItem(product: Product) {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("刪除確認")
             .setMessage("您確定要刪除商品 [${product.item_name}] 嗎？此動作無法復原。")
             .setPositiveButton("確定刪除") { _, _ -> sendDeleteItemRequest(product) }
@@ -1130,7 +1153,7 @@ class HomeActivity : AppCompatActivity() {
         val txtNotice = TextView(context).apply {
             text = "未設定個別匯率/factor 的商品，估值時將套用以下全域參數。"
             textSize = 12f
-            setTextColor(Color.parseColor("#D3D3D3"))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
             setPadding(0, 0, 0, 20)
         }
         val edtRate = EditText(context).apply {
@@ -1148,7 +1171,7 @@ class HomeActivity : AppCompatActivity() {
         container.addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 25) })
         container.addView(edtTax)
 
-        val dialog = AlertDialog.Builder(context)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle("全域匯率及調整 factor 維護")
             .setView(container)
             .setPositiveButton("儲存", null) // overridden below so validation failures don't auto-dismiss
@@ -1207,14 +1230,14 @@ class HomeActivity : AppCompatActivity() {
             text = "庫存異動調整: ${product.item_name}"
             textSize = 16f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val btnEditMenu = TextView(context).apply {
             text = "⋯"
             textSize = 20f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#ADB5BD"))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
             setPadding(20, 0, 10, 0)
             isClickable = true
             isFocusable = true
@@ -1223,24 +1246,32 @@ class HomeActivity : AppCompatActivity() {
         titleView.addView(btnEditMenu)
 
         val radioGroup = RadioGroup(context).apply { orientation = RadioGroup.HORIZONTAL; setPadding(0, 0, 0, 30) }
-        val radioIn = RadioButton(context).apply { text = "入庫"; id = RADIO_ID_STOCK_IN; isChecked = true; setTextColor(Color.WHITE) }
-        val radioOut = RadioButton(context).apply { text = "出庫"; id = RADIO_ID_STOCK_OUT; setTextColor(Color.WHITE) }
+        val radioIn = RadioButton(context).apply {
+            text = "入庫"; id = RADIO_ID_STOCK_IN
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+        }
+        // Defaults to OUT rather than IN: outgoing transactions are far more
+        // common in daily operations, so this saves a tap on the common case.
+        val radioOut = RadioButton(context).apply {
+            text = "出庫"; id = RADIO_ID_STOCK_OUT; isChecked = true
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+        }
         radioGroup.addView(radioIn)
         radioGroup.addView(radioOut)
 
         val edtQty = EditText(context).apply {
             hint = "請輸入異動數量"
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.WHITE)
+            setHintTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.color_surface_container_low))
             setPadding(30, 25, 30, 25)
             inputType = InputType.TYPE_CLASS_NUMBER
         }
         val edtRemark = EditText(context).apply {
             hint = "請輸入備註說明"
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.WHITE)
+            setHintTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.color_surface_container_low))
             setPadding(30, 25, 30, 25)
         }
         container.addView(radioGroup)
@@ -1248,15 +1279,13 @@ class HomeActivity : AppCompatActivity() {
         container.addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 20) })
         container.addView(edtRemark)
 
-        val btnHistory = Button(context).apply {
+        val btnHistory = MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "檢視此品項歷史交易日誌"
-            setBackgroundColor(Color.parseColor("#495057"))
-            setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 40 }
         }
         container.addView(btnHistory)
 
-        val alertDialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val alertDialog = MaterialAlertDialogBuilder(context)
             .setCustomTitle(titleView)
             .setView(container)
             .setPositiveButton("確定送出", null) // overridden below so validation failures don't auto-dismiss
@@ -1274,7 +1303,6 @@ class HomeActivity : AppCompatActivity() {
         }
         alertDialog.show()
 
-
         alertDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val qty = edtQty.text.toString().trim().toIntOrNull() ?: 0
             val remark = edtRemark.text.toString().trim()
@@ -1287,7 +1315,7 @@ class HomeActivity : AppCompatActivity() {
 
             // Client-side guard: mirrors the server-side check but avoids a wasted round-trip.
             if (actionType == "OUT" && qty > product.current_qty) {
-                AlertDialog.Builder(context).apply {
+                MaterialAlertDialogBuilder(context).apply {
                     setTitle("庫存餘額不足")
                     setMessage("無法執行出貨！\n\n目前品項 [${product.item_name}] 倉庫僅剩 ${product.current_qty} 件，而您企圖出貨 $qty 件。\n\n請重新確認實體盤點數量！")
                     setCancelable(false)
@@ -1302,14 +1330,13 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /** Shows the transaction history for a single product in a dark-themed scrollable dialog. */
+    /** Shows the transaction history for a single product in a scrollable dialog. */
     private fun showHistoryDialog(product: Product) {
         val context = this
 
         val outerLayout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(50, 40, 50, 40)
-            setBackgroundColor(Color.parseColor("#000000"))
         }
         val scrollView = ScrollView(context).apply {
             isVerticalScrollBarEnabled = true
@@ -1318,21 +1345,21 @@ class HomeActivity : AppCompatActivity() {
         val txtHistoryContent = TextView(context).apply {
             text = "正在向資料庫索取日誌中..."
             textSize = 14f
-            setTextColor(Color.parseColor("#FFFFFF"))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
             setLineSpacing(10f, 1f)
         }
         scrollView.addView(txtHistoryContent)
         outerLayout.addView(scrollView)
 
-        val btnClose = Button(context).apply {
+        val btnClose = MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "關閉退出"
-            setBackgroundColor(Color.parseColor("#DC3545"))
-            setTextColor(Color.WHITE)
+            setTextColor(ContextCompat.getColor(context, R.color.color_danger))
+            strokeColor = ContextCompat.getColorStateList(context, R.color.color_danger)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 30 }
         }
         outerLayout.addView(btnClose)
 
-        val historyDialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val historyDialog = MaterialAlertDialogBuilder(context)
             .setTitle("${product.item_name} 歷史交易清單")
             .setView(outerLayout)
             .create()
@@ -1347,7 +1374,7 @@ class HomeActivity : AppCompatActivity() {
                         if (historyList.isEmpty()) {
                             runOnUiThread {
                                 txtHistoryContent.text = "此品項目前尚無交易紀錄。"
-                                txtHistoryContent.setTextColor(Color.WHITE)
+                                txtHistoryContent.setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
                             }
                             return
                         }
@@ -1362,7 +1389,7 @@ class HomeActivity : AppCompatActivity() {
                         }
                         runOnUiThread {
                             txtHistoryContent.text = sb.toString()
-                            txtHistoryContent.setTextColor(Color.WHITE)
+                            txtHistoryContent.setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
                         }
                     }
 
@@ -1382,7 +1409,7 @@ class HomeActivity : AppCompatActivity() {
             override fun onFailure(call: Call<List<TransactionHistoryItem>>, t: Throwable) {
                 runOnUiThread {
                     txtHistoryContent.text = "索取歷史日誌失敗: ${t.localizedMessage}"
-                    txtHistoryContent.setTextColor(Color.WHITE)
+                    txtHistoryContent.setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
                 }
             }
         })
@@ -1397,7 +1424,7 @@ class HomeActivity : AppCompatActivity() {
                 when {
                     response.isSuccessful -> runOnUiThread {
                         Toast.makeText(this@HomeActivity, "交易成功！", Toast.LENGTH_SHORT).show()
-                        loadStockData()
+                        loadStockData(scrollToItemId = itemId.toIntOrNull())
                     }
                     response.code() == 401 -> runOnUiThread {
                         Toast.makeText(this@HomeActivity, "登入已逾時，請重新登入。", Toast.LENGTH_LONG).show()
@@ -1421,6 +1448,29 @@ class HomeActivity : AppCompatActivity() {
     // Global (cross-item) transaction history
     // =====================================================================
 
+    /**
+     * Resizes [dialog]'s window to span the full screen width and the area
+     * from just below the top bar down to the bottom of the screen -- used
+     * for "面板"-style dialogs (like the global history log) that should
+     * behave more like a full-screen panel than a small popup.
+     */
+    private fun resizeDialogBelowTopBar(dialog: AlertDialog) {
+        val topBar = findViewById<View>(R.id.topBar) ?: return
+        val location = IntArray(2)
+        topBar.getLocationOnScreen(location)
+        val topOffset = location[1] + topBar.height
+        val screenHeight = resources.displayMetrics.heightPixels
+        val desiredHeight = (screenHeight - topOffset).coerceAtLeast(0)
+
+        dialog.window?.let { window ->
+            window.setGravity(Gravity.TOP)
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, desiredHeight)
+            val params = window.attributes
+            params.y = topOffset
+            window.attributes = params
+        }
+    }
+
     /** Shows the full, cross-item transaction log, newest first. */
     private fun showGlobalHistoryDialog() {
         val context = this
@@ -1430,25 +1480,31 @@ class HomeActivity : AppCompatActivity() {
             text = "全庫房歷史異動總帳流水線：\n(由近往遠，最新異動自動置頂)"
             setTypeface(Typeface.DEFAULT_BOLD)
             textSize = 15f
-            setTextColor(Color.parseColor("#FFFFFF"))
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
         }
         container.addView(txtTitle)
 
         val scrollView = ScrollView(context).apply {
             isVerticalScrollBarEnabled = true
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1000).apply { topMargin = 10 }
+            // 0dp height + weight so this fills all space the resized dialog window gives it,
+            // instead of the old fixed 1000px cap.
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 10 }
         }
         val listContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        listContainer.addView(TextView(context).apply { text = "正在讀取全域流水帳中..."; setTextColor(Color.parseColor("#FFFFFF")) })
+        listContainer.addView(TextView(context).apply {
+            text = "正在讀取全域流水帳中..."
+            setTextColor(ContextCompat.getColor(context, R.color.color_on_surface_variant))
+        })
         scrollView.addView(listContainer)
         container.addView(scrollView)
 
-        val dialog = AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle("時序交易查詢面板")
             .setView(container)
             .setNegativeButton("關閉退出", null)
             .create()
         dialog.show()
+        resizeDialogBelowTopBar(dialog)
 
         RetrofitClient.instance.getGlobalHistory().enqueue(object : Callback<List<GlobalLogResponse>> {
             override fun onResponse(call: Call<List<GlobalLogResponse>>, response: Response<List<GlobalLogResponse>>) {
@@ -1457,12 +1513,18 @@ class HomeActivity : AppCompatActivity() {
                         response.isSuccessful -> renderGlobalHistory(context, listContainer, response.body() ?: emptyList())
                         response.code() == 401 -> {
                             listContainer.removeAllViews()
-                            listContainer.addView(TextView(context).apply { text = "登入已逾時，請重新登入。"; setTextColor(Color.YELLOW) })
+                            listContainer.addView(TextView(context).apply {
+                                text = "登入已逾時，請重新登入。"
+                                setTextColor(ContextCompat.getColor(context, R.color.color_danger))
+                            })
                             Toast.makeText(context, "登入已逾時，請重新登入。", Toast.LENGTH_LONG).show()
                         }
                         else -> {
                             listContainer.removeAllViews()
-                            listContainer.addView(TextView(context).apply { text = "讀取流水帳失敗 (HTTP ${response.code()})"; setTextColor(Color.RED) })
+                            listContainer.addView(TextView(context).apply {
+                                text = "讀取流水帳失敗 (HTTP ${response.code()})"
+                                setTextColor(ContextCompat.getColor(context, R.color.color_danger))
+                            })
                         }
                     }
                 }
@@ -1471,7 +1533,10 @@ class HomeActivity : AppCompatActivity() {
             override fun onFailure(call: Call<List<GlobalLogResponse>>, t: Throwable) {
                 runOnUiThread {
                     listContainer.removeAllViews()
-                    listContainer.addView(TextView(context).apply { text = "無法連線到伺服器：${t.localizedMessage}"; setTextColor(Color.RED) })
+                    listContainer.addView(TextView(context).apply {
+                        text = "無法連線到伺服器：${t.localizedMessage}"
+                        setTextColor(ContextCompat.getColor(context, R.color.color_danger))
+                    })
                 }
                 Log.e(TAG, "Failed to load global history", t)
             }
@@ -1483,7 +1548,10 @@ class HomeActivity : AppCompatActivity() {
         listContainer.removeAllViews()
 
         if (logs.isEmpty()) {
-            listContainer.addView(TextView(context).apply { text = "目前資料庫尚無任何庫存進出交易紀錄。"; setTextColor(Color.WHITE) })
+            listContainer.addView(TextView(context).apply {
+                text = "目前資料庫尚無任何庫存進出交易紀錄。"
+                setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
+            })
             return
         }
 
@@ -1501,14 +1569,14 @@ class HomeActivity : AppCompatActivity() {
                         "異動人員: $displayOperator\n" +
                         "備註: $remarkStr"
                 textSize = 13f
-                setTextColor(Color.WHITE)
+                setTextColor(ContextCompat.getColor(context, R.color.color_on_surface))
                 setLineSpacing(0f, 1.15f)
             }
             row.addView(txtLogInfo)
 
             row.addView(View(context).apply {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2).apply { topMargin = 15 }
-                setBackgroundColor(Color.parseColor("#555555"))
+                setBackgroundColor(ContextCompat.getColor(context, R.color.color_outline_variant))
             })
 
             listContainer.addView(row)
