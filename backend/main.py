@@ -649,6 +649,7 @@ def commit_bulk_import(payload: BulkImportCommitRequest, conn=Depends(get_db_con
             conn.commit()
     except Exception as e:
         conn.rollback()
+        logger.exception("Bulk import commit failed and was rolled back")
         raise HTTPException(status_code=500, detail=f"批次匯入失敗，已回滾，未寫入任何資料：{str(e)}")
 
     return BulkImportCommitResponse(

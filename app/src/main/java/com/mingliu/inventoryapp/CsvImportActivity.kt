@@ -35,6 +35,24 @@ private fun anyToDoubleOrNull(value: Any?): Double? = when (value) {
 }
 
 /**
+ * FastAPI's HTTPException responses look like {"detail": "..."} -- surface
+ * that actual message (e.g. "系統錯誤：找不到 Admin 帳號") instead of just a
+ * generic HTTP status code, which is not enough to diagnose anything.
+ */
+private fun extractErrorDetail(response: Response<*>): String {
+    return try {
+        val errorBodyText = response.errorBody()?.string()
+        if (errorBodyText.isNullOrBlank()) {
+            "HTTP ${response.code()}"
+        } else {
+            org.json.JSONObject(errorBodyText).optString("detail", errorBodyText)
+        }
+    } catch (e: Exception) {
+        "HTTP ${response.code()}"
+    }
+}
+
+/**
  * Admin-only: preview then confirm a stock-in CSV batch import (存貨開帳-style
  * opening balance load). Reads the picked file, sends its raw content to the
  * backend for parsing/validation (no DB writes yet), shows every row's
@@ -106,7 +124,9 @@ class CsvImportActivity : AppCompatActivity() {
         RetrofitClient.instance.previewBulkImport(BulkImportPreviewRequest(csvContent)).enqueue(object : Callback<BulkImportPreviewResponse> {
             override fun onResponse(call: Call<BulkImportPreviewResponse>, response: Response<BulkImportPreviewResponse>) {
                 if (!response.isSuccessful) {
-                    runOnUiThread { showMessage("預覽失敗 (HTTP ${response.code()})", isError = true) }
+                    val detail = extractErrorDetail(response)
+                    Log.e(TAG, "Bulk import preview failed: $detail")
+                    runOnUiThread { showMessage("預覽失敗：$detail", isError = true) }
                     return
                 }
                 val body = response.body() ?: return
@@ -271,7 +291,13 @@ class CsvImportActivity : AppCompatActivity() {
                             .show()
                     } else {
                         btnConfirm.isEnabled = true
-                        Toast.makeText(this@CsvImportActivity, "匯入失敗 (HTTP ${response.code()})，未寫入任何資料", Toast.LENGTH_LONG).show()
+                        val detail = extractErrorDetail(response)
+                        Log.e(TAG, "Bulk import commit failed: $detail")
+                        MaterialAlertDialogBuilder(this@CsvImportActivity)
+                            .setTitle("匯入失敗")
+                            .setMessage("$detail\n\n未寫入任何資料（已自動回滾）。")
+                            .setPositiveButton("OK", null)
+                            .show()
                     }
                 }
             }
