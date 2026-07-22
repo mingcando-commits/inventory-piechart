@@ -25,7 +25,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jwt import ExpiredSignatureError
 from passlib.context import CryptContext
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -594,6 +594,14 @@ def commit_bulk_import(payload: BulkImportCommitRequest, conn=Depends(get_db_con
     batch rolls back, since a half-applied opening-balance import would be
     worse than none at all.
 
+    Batches all writes via execute_values -- a handful of round-trips total,
+    regardless of how many rows are in the batch, rather than ~4-5 sequential
+    round-trips per row. A large CSV doing hundreds of one-row-at-a-time
+    round-trips to a remote DB can take long enough to hit an HTTP timeout
+    (the client's, or the hosting platform's) even though the work itself
+    would eventually succeed -- which is exactly what "the app said it
+    failed, but the data shows up anyway" looks like from the outside.
+
     Per the batch's requirements: operator is always the "Admin" account
     (regardless of which admin triggered the import) and remark is "開帳",
     matching an opening-balance stock load rather than a routine transaction.
@@ -606,46 +614,79 @@ def commit_bulk_import(payload: BulkImportCommitRequest, conn=Depends(get_db_con
             raise HTTPException(status_code=500, detail="系統錯誤：找不到 Admin 帳號")
         admin_id = admin_row["operator_id"]
 
-    created_count = 0
-    updated_count = 0
+    create_rows = [r for r in payload.rows if r.action == "create"]
+    update_rows = [r for r in payload.rows if r.action == "update"]
 
     try:
         with conn.cursor() as cur:
-            for row in payload.rows:
-                if row.action == "create":
-                    cur.execute(
-                        """INSERT INTO item_master (item_name, category, usd_price, last_update_date, last_update_operator_id)
-                           VALUES (%s, %s, %s, CURRENT_DATE, %s) RETURNING item_id""",
-                        (row.item_name, row.category, row.usd_price, admin_id),
-                    )
-                    target_item_id = cur.fetchone()["item_id"]
-                    cur.execute(
-                        "INSERT INTO stock_master (item_id, current_qty, last_update_date, last_update_time) VALUES (%s, 0, CURRENT_DATE, CURRENT_TIME)",
-                        (target_item_id,),
-                    )
-                    created_count += 1
-                elif row.action == "update":
-                    target_item_id = row.matched_item_id
-                    updated_count += 1
-                else:
-                    continue  # "error" rows are skipped, not committed
-
-                cur.execute("SELECT current_qty FROM stock_master WHERE item_id = %s FOR UPDATE", (target_item_id,))
-                stock = cur.fetchone()
-                current_qty = stock["current_qty"] if stock else 0
-                new_qty = current_qty + row.quantity
-
-                cur.execute(
-                    """UPDATE stock_master SET current_qty = %s, last_update_date = CURRENT_DATE, last_update_time = CURRENT_TIME
-                       WHERE item_id = %s""",
-                    (new_qty, target_item_id),
+            # 1. Bulk-create every new item in one round-trip. A single
+            #    multi-row INSERT...VALUES...RETURNING preserves input order,
+            #    so new_item_ids[i] corresponds to create_rows[i].
+            new_item_ids = []
+            if create_rows:
+                create_values = [(r.item_name, r.category, r.usd_price, admin_id) for r in create_rows]
+                results = execute_values(
+                    cur,
+                    """INSERT INTO item_master (item_name, category, usd_price, last_update_date, last_update_operator_id)
+                       VALUES %s RETURNING item_id""",
+                    create_values,
+                    template="(%s, %s, %s, CURRENT_DATE, %s)",
+                    page_size=len(create_values),
+                    fetch=True,
                 )
-                cur.execute(
+                new_item_ids = [row["item_id"] for row in results]
+
+                # 2. Bulk-create their zero-quantity stock_master rows, one round-trip.
+                execute_values(
+                    cur,
+                    "INSERT INTO stock_master (item_id, current_qty, last_update_date, last_update_time) VALUES %s",
+                    [(item_id,) for item_id in new_item_ids],
+                    template="(%s, 0, CURRENT_DATE, CURRENT_TIME)",
+                    page_size=len(new_item_ids),
+                )
+
+            # Every item in this batch (new or existing) appears exactly once
+            # -- duplicates within one CSV were already rejected at preview time.
+            target_pairs = list(zip(new_item_ids, (r.quantity for r in create_rows)))
+            target_pairs += [(r.matched_item_id, r.quantity) for r in update_rows]
+
+            if target_pairs:
+                target_ids = [item_id for item_id, _ in target_pairs]
+
+                # 3. Lock + fetch current balances for every touched item, one round-trip.
+                cur.execute("SELECT item_id, current_qty FROM stock_master WHERE item_id = ANY(%s) FOR UPDATE", (target_ids,))
+                current_balances = {row["item_id"]: row["current_qty"] for row in cur.fetchall()}
+
+                update_values = []
+                transaction_values = []
+                for item_id, qty in target_pairs:
+                    new_qty = current_balances.get(item_id, 0) + qty
+                    update_values.append((item_id, new_qty))
+                    transaction_values.append((item_id, qty, new_qty, admin_id))
+
+                # 4. Bulk-update stock_master balances, one round-trip.
+                execute_values(
+                    cur,
+                    """UPDATE stock_master AS s SET current_qty = v.new_qty,
+                       last_update_date = CURRENT_DATE, last_update_time = CURRENT_TIME
+                       FROM (VALUES %s) AS v(item_id, new_qty)
+                       WHERE s.item_id = v.item_id""",
+                    update_values,
+                    template="(%s, %s)",
+                    page_size=len(update_values),
+                )
+
+                # 5. Bulk-insert every stock-in transaction, one round-trip.
+                execute_values(
+                    cur,
                     """INSERT INTO stock_transactions
                        (transaction_date, transaction_time, item_id, io_type, transaction_qty, post_balance_qty, remark, operator_id)
-                       VALUES (CURRENT_DATE, CURRENT_TIME, %s, 'IN', %s, %s, %s, %s)""",
-                    (target_item_id, row.quantity, new_qty, "開帳", admin_id),
+                       VALUES %s""",
+                    transaction_values,
+                    template="(CURRENT_DATE, CURRENT_TIME, %s, 'IN', %s, %s, '開帳', %s)",
+                    page_size=len(transaction_values),
                 )
+
             conn.commit()
     except Exception as e:
         conn.rollback()
@@ -653,9 +694,9 @@ def commit_bulk_import(payload: BulkImportCommitRequest, conn=Depends(get_db_con
         raise HTTPException(status_code=500, detail=f"批次匯入失敗，已回滾，未寫入任何資料：{str(e)}")
 
     return BulkImportCommitResponse(
-        created_count=created_count,
-        updated_count=updated_count,
-        message=f"匯入完成：新增 {created_count} 項商品，更新 {updated_count} 項庫存",
+        created_count=len(create_rows),
+        updated_count=len(update_rows),
+        message=f"匯入完成：新增 {len(create_rows)} 項商品，更新 {len(update_rows)} 項庫存",
     )
 
 

@@ -8,6 +8,7 @@ import retrofit2.Call
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
+import java.util.concurrent.TimeUnit
 
 // ========================================================
 // 1. API route definitions (all relative to RetrofitClient.BASE_URL)
@@ -332,6 +333,16 @@ object RetrofitClient {
         OkHttpClient.Builder()
             .addInterceptor(TokenInterceptor(appContext))
             .addInterceptor(AuthExpiredInterceptor(appContext))
+            // Default OkHttp timeouts are 10s each, which is fine for normal
+            // requests but far too short for /api/items/bulk-import/commit --
+            // that endpoint does several sequential DB writes per CSV row, so
+            // a large batch can legitimately take well over a minute. A short
+            // timeout here doesn't stop the server from finishing the work;
+            // it just makes the app report failure on a request that actually
+            // succeeded, which is worse than just waiting.
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(180, TimeUnit.SECONDS)
             .build()
     }
 
