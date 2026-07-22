@@ -37,6 +37,10 @@
             android:name=".ValuationReportActivity"
             android:exported="false"
             android:parentActivityName=".HomeActivity" />
+        <activity
+            android:name=".CsvImportActivity"
+            android:exported="false"
+            android:parentActivityName=".HomeActivity" />
     </application>
 
 </manifest>

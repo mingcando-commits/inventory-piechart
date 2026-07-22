@@ -11,6 +11,8 @@ Database: PostgreSQL (local via DB_CONFIG, or cloud via DATABASE_URL env var,
 e.g. when deployed on Render + Supabase).
 """
 
+import csv
+import io
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -199,6 +201,42 @@ class ItemCreateUpdate(BaseModel):
 class GlobalSettingsUpdate(BaseModel):
     global_exchange_rate: float
     global_tax_coefficient: float
+
+
+class BulkImportRow(BaseModel):
+    """One parsed/validated row from a stock-in CSV import (存貨開帳 style)."""
+    row_number: int
+    item_name: str
+    category: str
+    usd_price: Optional[float] = None
+    quantity: int
+    action: str  # "create" | "update" | "error"
+    matched_item_id: Optional[int] = None  # set when action == "update"
+    error_message: Optional[str] = None    # set when action == "error"
+
+
+class BulkImportPreviewRequest(BaseModel):
+    csv_content: str
+
+
+class BulkImportPreviewResponse(BaseModel):
+    rows: List[BulkImportRow]
+    new_count: int
+    update_count: int
+    error_count: int
+
+
+class BulkImportCommitRequest(BaseModel):
+    # The exact row list returned by the preview endpoint -- committing what
+    # was previewed, rather than re-parsing, guarantees no drift between
+    # what the admin reviewed and what actually gets written.
+    rows: List[BulkImportRow]
+
+
+class BulkImportCommitResponse(BaseModel):
+    created_count: int
+    updated_count: int
+    message: str
 
 
 class TransactionCreate(BaseModel):
@@ -422,6 +460,202 @@ def get_item(item_id: int, current_user=Depends(get_current_user), conn=Depends(
         if not item:
             raise HTTPException(status_code=404, detail="找不到該 Item")
         return item
+
+
+# ---------------------------------------------------------------------------
+# Bulk stock-in import (CSV): 存貨開帳-style batch load
+# ---------------------------------------------------------------------------
+def _normalize_item_name(name: str) -> str:
+    """Strips ALL whitespace and lowercases, for case/space-insensitive matching."""
+    return "".join(name.split()).lower()
+
+
+def _parse_csv_price(raw: str) -> Optional[float]:
+    """Parses a price cell like 'US$297.00' -> 297.0. Returns None if blank/unparseable."""
+    if not raw or not raw.strip():
+        return None
+    cleaned = raw.strip().replace("US$", "").replace("$", "").replace(",", "")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _parse_bulk_import_csv(csv_content: str, existing_items: list) -> List[BulkImportRow]:
+    """Parses and validates a stock-in CSV (no header row; columns: item_name,
+    category, price, quantity) against the current item list, classifying
+    each row as create/update/error without touching the database.
+
+    A blank price on a brand-new item defaults to 0 rather than erroring the
+    row (existing items are unaffected either way, since their price is
+    never touched by this import).
+    """
+    existing_map = {_normalize_item_name(item["item_name"]): item["item_id"] for item in existing_items}
+    seen_in_batch: dict[str, int] = {}  # normalized name -> first row_number seen
+
+    rows: List[BulkImportRow] = []
+    reader = csv.reader(io.StringIO(csv_content))
+
+    for i, raw_row in enumerate(reader, start=1):
+        if not raw_row or all(not cell.strip() for cell in raw_row):
+            continue  # blank row (e.g. trailing empty lines) -- not an error, just skip
+
+        if len(raw_row) < 4:
+            rows.append(BulkImportRow(
+                row_number=i, item_name=",".join(raw_row), category="", quantity=0,
+                action="error", error_message="欄位數量不足（需要4欄：品名、類別、單價、數量）",
+            ))
+            continue
+
+        name = raw_row[0].strip()
+        category = raw_row[1].strip()
+        price = _parse_csv_price(raw_row[2])
+        try:
+            quantity = int(raw_row[3].strip())
+        except (ValueError, AttributeError):
+            quantity = 0
+
+        if not name:
+            continue  # blank name -- treat like a blank row
+
+        normalized = _normalize_item_name(name)
+
+        if normalized in seen_in_batch:
+            rows.append(BulkImportRow(
+                row_number=i, item_name=name, category=category, usd_price=price, quantity=quantity,
+                action="error", error_message=f"與第 {seen_in_batch[normalized]} 列重複（同一批次內品名重複）",
+            ))
+            continue
+        seen_in_batch[normalized] = i
+
+        if category not in ("Main", "Accessories"):
+            rows.append(BulkImportRow(
+                row_number=i, item_name=name, category=category, usd_price=price, quantity=quantity,
+                action="error", error_message="類別必須是 Main 或 Accessories",
+            ))
+            continue
+
+        if quantity <= 0:
+            rows.append(BulkImportRow(
+                row_number=i, item_name=name, category=category, usd_price=price, quantity=quantity,
+                action="error", error_message="數量無效或為 0",
+            ))
+            continue
+
+        matched_item_id = existing_map.get(normalized)
+
+        if matched_item_id is not None:
+            rows.append(BulkImportRow(
+                row_number=i, item_name=name, category=category, usd_price=price, quantity=quantity,
+                action="update", matched_item_id=matched_item_id,
+            ))
+        else:
+            # A blank price on a brand-new item defaults to 0 (rather than
+            # being rejected) -- the admin can edit the real price in later
+            # via 更新商品資料 once known.
+            rows.append(BulkImportRow(
+                row_number=i, item_name=name, category=category, usd_price=(price if price is not None else 0.0),
+                quantity=quantity, action="create",
+            ))
+
+    return rows
+
+
+@app.post("/api/items/bulk-import/preview", dependencies=[Depends(verify_admin)])
+def preview_bulk_import(payload: BulkImportPreviewRequest, conn=Depends(get_db_connection)):
+    """Parses a stock-in CSV and classifies each row as create/update/error,
+    WITHOUT writing anything to the database. Admin only.
+
+    Matching against existing items ignores spacing and case. Existing items
+    are never renamed/re-priced/re-categorized by this import -- only their
+    stock quantity changes; item_name/category/usd_price here are only used
+    when the row is classified as "create" (a brand-new item).
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT item_id, item_name FROM item_master")
+        existing_items = cur.fetchall()
+
+    rows = _parse_bulk_import_csv(payload.csv_content, existing_items)
+
+    return BulkImportPreviewResponse(
+        rows=rows,
+        new_count=sum(1 for r in rows if r.action == "create"),
+        update_count=sum(1 for r in rows if r.action == "update"),
+        error_count=sum(1 for r in rows if r.action == "error"),
+    )
+
+
+@app.post("/api/items/bulk-import/commit", dependencies=[Depends(verify_admin)])
+def commit_bulk_import(payload: BulkImportCommitRequest, conn=Depends(get_db_connection)):
+    """Executes a previously-previewed stock-in batch: creates new items
+    (starting at 0 stock) and/or adds a stock-in transaction to existing
+    items, for every row marked "create"/"update" (rows marked "error" are
+    ignored). All-or-nothing: if anything fails partway through, the whole
+    batch rolls back, since a half-applied opening-balance import would be
+    worse than none at all.
+
+    Per the batch's requirements: operator is always the "Admin" account
+    (regardless of which admin triggered the import) and remark is "開帳",
+    matching an opening-balance stock load rather than a routine transaction.
+    Admin only.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT operator_id FROM operator_master WHERE operator_name = 'Admin'")
+        admin_row = cur.fetchone()
+        if not admin_row:
+            raise HTTPException(status_code=500, detail="系統錯誤：找不到 Admin 帳號")
+        admin_id = admin_row["operator_id"]
+
+    created_count = 0
+    updated_count = 0
+
+    try:
+        with conn.cursor() as cur:
+            for row in payload.rows:
+                if row.action == "create":
+                    cur.execute(
+                        """INSERT INTO item_master (item_name, category, usd_price, last_update_date, last_update_operator_id)
+                           VALUES (%s, %s, %s, CURRENT_DATE, %s) RETURNING item_id""",
+                        (row.item_name, row.category, row.usd_price, admin_id),
+                    )
+                    target_item_id = cur.fetchone()["item_id"]
+                    cur.execute(
+                        "INSERT INTO stock_master (item_id, current_qty, last_update_date, last_update_time) VALUES (%s, 0, CURRENT_DATE, CURRENT_TIME)",
+                        (target_item_id,),
+                    )
+                    created_count += 1
+                elif row.action == "update":
+                    target_item_id = row.matched_item_id
+                    updated_count += 1
+                else:
+                    continue  # "error" rows are skipped, not committed
+
+                cur.execute("SELECT current_qty FROM stock_master WHERE item_id = %s FOR UPDATE", (target_item_id,))
+                stock = cur.fetchone()
+                current_qty = stock["current_qty"] if stock else 0
+                new_qty = current_qty + row.quantity
+
+                cur.execute(
+                    """UPDATE stock_master SET current_qty = %s, last_update_date = CURRENT_DATE, last_update_time = CURRENT_TIME
+                       WHERE item_id = %s""",
+                    (new_qty, target_item_id),
+                )
+                cur.execute(
+                    """INSERT INTO stock_transactions
+                       (transaction_date, transaction_time, item_id, io_type, transaction_qty, post_balance_qty, remark, operator_id)
+                       VALUES (CURRENT_DATE, CURRENT_TIME, %s, 'IN', %s, %s, %s, %s)""",
+                    (target_item_id, row.quantity, new_qty, "開帳", admin_id),
+                )
+            conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"批次匯入失敗，已回滾，未寫入任何資料：{str(e)}")
+
+    return BulkImportCommitResponse(
+        created_count=created_count,
+        updated_count=updated_count,
+        message=f"匯入完成：新增 {created_count} 項商品，更新 {updated_count} 項庫存",
+    )
 
 
 # ---------------------------------------------------------------------------

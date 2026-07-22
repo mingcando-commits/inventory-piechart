@@ -23,6 +23,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -48,7 +49,8 @@ private const val ADMIN_MENU_GLOBAL_HISTORY = 3
 private const val ADMIN_MENU_STOCK_CHART = 4
 private const val ADMIN_MENU_GLOBAL_SETTINGS = 5
 private const val ADMIN_MENU_VALUATION_REPORT = 6
-private const val ADMIN_MENU_LOGOUT = 7
+private const val ADMIN_MENU_CSV_IMPORT = 7
+private const val ADMIN_MENU_LOGOUT = 8
 private const val RADIO_ID_STOCK_IN = 1001
 private const val RADIO_ID_STOCK_OUT = 1002
 
@@ -83,6 +85,15 @@ class HomeActivity : AppCompatActivity() {
     private var currentRawProductList: List<Product> = emptyList()
     private var currentDisplayedList: List<Product> = emptyList()
     private var savedSortCriteria: String = "ID_ASC"
+
+    // Must be registered before the Activity reaches STARTED, so these are
+    // initialized as property initializers rather than inside onCreate().
+    private val csvImportResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) loadStockData()
+    }
+    private val csvPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { csvImportResultLauncher.launch(CsvImportActivity.newIntent(this, it)) }
+    }
 
     // =====================================================================
     // Lifecycle & setup
@@ -277,12 +288,12 @@ class HomeActivity : AppCompatActivity() {
         val options = if (currentUserIsAdmin) {
             arrayOf(
                 "人員權限與名冊維護", "變更人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表",
-                "全域匯率及調整 factor 維護", "當前資產估值查詢", "登出系統，安全退出"
+                "全域匯率及調整 factor 維護", "當前資產估值查詢", "入庫資料匯入 (CSV)", "登出系統，安全退出"
             )
         } else {
             arrayOf(
                 "人員權限與名冊維護 (僅限管理員)", "變更個人或人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表 (僅限管理員)",
-                "全域匯率及調整 factor 維護 (僅限管理員)", "當前資產估值查詢 (僅限管理員)", "登出系統，安全退出"
+                "全域匯率及調整 factor 維護 (僅限管理員)", "當前資產估值查詢 (僅限管理員)", "入庫資料匯入 (僅限管理員)", "登出系統，安全退出"
             )
         }
 
@@ -317,6 +328,14 @@ class HomeActivity : AppCompatActivity() {
                         dialog.dismiss()
                         if (currentUserIsAdmin) {
                             startActivity(Intent(this, ValuationReportActivity::class.java))
+                        } else {
+                            Toast.makeText(this, "此功能已鎖定，僅限管理員操作", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    ADMIN_MENU_CSV_IMPORT -> {
+                        dialog.dismiss()
+                        if (currentUserIsAdmin) {
+                            csvPickerLauncher.launch("text/*")
                         } else {
                             Toast.makeText(this, "此功能已鎖定，僅限管理員操作", Toast.LENGTH_SHORT).show()
                         }

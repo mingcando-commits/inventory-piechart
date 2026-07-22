@@ -54,6 +54,18 @@ interface ApiService {
         @Path("item_id") itemId: Int
     ): Call<ItemDetailResponse>
 
+    /** Parses a stock-in CSV and classifies each row as create/update/error, without writing to the DB. Admin only. */
+    @POST("/api/items/bulk-import/preview")
+    fun previewBulkImport(
+        @Body request: BulkImportPreviewRequest
+    ): Call<BulkImportPreviewResponse>
+
+    /** Executes a previously-previewed stock-in batch. Admin only. */
+    @POST("/api/items/bulk-import/commit")
+    fun commitBulkImport(
+        @Body request: BulkImportCommitRequest
+    ): Call<BulkImportCommitResponse>
+
     /** Updates an existing item's master data (name, category, price, rate, factor). Never touches current_qty. */
     @PUT("/api/items/{item_id}")
     fun updateItem(
@@ -181,6 +193,40 @@ data class ItemDetailResponse(
     val usd_price: Any,
     val exchange_rate: Any?,
     val tax_coefficient: Any?
+)
+
+/**
+ * One parsed/validated row from a stock-in CSV import (存貨開帳-style batch load).
+ * action is one of "create" (new item), "update" (existing item, quantity only),
+ * or "error" (skipped -- see error_message).
+ */
+data class BulkImportRow(
+    val row_number: Int,
+    val item_name: String,
+    val category: String,
+    val usd_price: Any?,
+    val quantity: Int,
+    val action: String,
+    val matched_item_id: Int?,
+    val error_message: String?
+)
+
+data class BulkImportPreviewRequest(val csv_content: String)
+
+data class BulkImportPreviewResponse(
+    val rows: List<BulkImportRow>,
+    val new_count: Int,
+    val update_count: Int,
+    val error_count: Int
+)
+
+/** Sends back the exact row list the preview returned, so what gets committed always matches what was reviewed. */
+data class BulkImportCommitRequest(val rows: List<BulkImportRow>)
+
+data class BulkImportCommitResponse(
+    val created_count: Int,
+    val updated_count: Int,
+    val message: String
 )
 
 data class TransactionHistoryItem(
