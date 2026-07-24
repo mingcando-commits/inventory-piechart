@@ -1,7 +1,0 @@
-Please make the following changes:
-
-1. Treat each column as one clickable item. When you click on the column, it will display information on top of screen. If there are too much text to display, make it a scrollable box (left/right). But make sure we have clear title (出庫，入庫，現有庫存）on the screen.
-2. Also, make the bar narrower. This way it can show 2 to 3 months' data all in one screen.
-3. If there are too many product items displayed in the botton of screen, make them can be slided right and left.
-
-Please give me the markup screen shot first before code changes.
