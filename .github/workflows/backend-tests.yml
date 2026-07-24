@@ -61,4 +61,4 @@ jobs:
           DB_USER: test
           DB_PASSWORD: test
           JWT_SECRET_KEY: ci-test-secret-key-not-for-production
-        run: pytest
+        run: python -m pytest
