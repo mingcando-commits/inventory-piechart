@@ -1,0 +1,11 @@
+services:
+  test-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: inventory_test
+    ports:
+      - "5433:5432"  # 5433, not 5432, so it doesn't clash with a local Postgres you may already have running
+    tmpfs:
+      - /var/lib/postgresql/data  # in-memory, so the container starts fresh every time
