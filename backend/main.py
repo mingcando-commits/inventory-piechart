@@ -130,9 +130,9 @@ def create_access_token(data: dict) -> str:
 
 
 def get_current_user(
-    request: Request,
-    token: str = Depends(oauth2_scheme),
-    conn=Depends(get_db_connection),
+        request: Request,
+        token: str = Depends(oauth2_scheme),
+        conn=Depends(get_db_connection),
 ):
     """Resolve the currently authenticated operator from the bearer token."""
     credentials_exception = HTTPException(
@@ -272,10 +272,10 @@ def get_all_operators(conn=Depends(get_db_connection)):
 
 @app.post("/api/operators/{operator_id}/password")
 def change_operator_password(
-    operator_id: int,
-    payload: OperatorUpdatePassword,
-    current_user=Depends(get_current_user),
-    conn=Depends(get_db_connection),
+        operator_id: int,
+        payload: OperatorUpdatePassword,
+        current_user=Depends(get_current_user),
+        conn=Depends(get_db_connection),
 ):
     """Change an operator's password.
 
@@ -1028,34 +1028,36 @@ def get_monthly_stock_summary(conn=Depends(get_db_connection)):
 # Startup: ensure a default Admin account always exists
 # ---------------------------------------------------------------------------
 def init_admin_account():
-    """Ensure an Admin operator exists with a known-good password hash.
+    """Ensures an Admin operator exists. Runs once at import time -- which
+    happens on every process restart, including a Render free-tier cold
+    start after 15 minutes of inactivity.
 
-    Runs once at import time. If no Admin exists, one is created with
-    DEFAULT_ADMIN_PASSWORD; if one exists, its password hash is refreshed
-    (useful after a hashing library upgrade). Change the default password
-    immediately after first login in any shared environment.
+    Deliberately only CREATES the Admin account if it's missing entirely.
+    Does NOT touch the password of an already-existing Admin account. An
+    earlier version of this function also reset an existing Admin's
+    password back to DEFAULT_ADMIN_PASSWORD on every startup -- which
+    silently reverted any password change made through the app the next
+    time the service happened to restart, and meant anyone who knew the
+    default password could regain Admin access after any idle-triggered
+    restart. If you ever need to force-reset a forgotten Admin password,
+    do it deliberately (e.g. a one-off SQL UPDATE), not automatically here.
     """
     try:
         conn = _connect()
         with conn.cursor() as cur:
-            correct_hash = get_password_hash(DEFAULT_ADMIN_PASSWORD)
             cur.execute("SELECT operator_id FROM operator_master WHERE operator_name = 'Admin';")
             user = cur.fetchone()
 
-            if user:
-                cur.execute(
-                    "UPDATE operator_master SET password_hash = %s, is_admin = TRUE WHERE operator_name = 'Admin';",
-                    (correct_hash,),
-                )
-                conn.commit()
-                logger.info("Existing Admin account found; password hash refreshed.")
-            else:
+            if not user:
+                default_hash = get_password_hash(DEFAULT_ADMIN_PASSWORD)
                 cur.execute(
                     "INSERT INTO operator_master (operator_name, password_hash, is_admin) VALUES (%s, %s, %s);",
-                    ("Admin", correct_hash, True),
+                    ("Admin", default_hash, True),
                 )
                 conn.commit()
-                logger.info("No Admin account found; created a new one.")
+                logger.info("No Admin account found; created a new one with the default password.")
+            else:
+                logger.info("Existing Admin account found; leaving its password untouched.")
         conn.close()
     except Exception as e:
         logger.error("Failed to initialize Admin account: %s", e)
