@@ -832,6 +832,77 @@ def search_transactions_by_date(start_date: date, end_date: date, conn=Depends(g
         return cur.fetchall()
 
 
+@app.get("/api/stock/period-summary")
+def get_period_stock_summary(
+        start_date: date,
+        end_date: Optional[date] = None,
+        conn=Depends(get_db_connection),
+):
+    """Inventory Period Stock-Out Quantity Statistics Query (庫存期間出庫量統計查詢).
+
+    For every item, returns:
+      - end_date_qty: stock balance as of `end_date` (point-in-time balance --
+        the post_balance_qty of that item's last transaction on or before
+        end_date, or 0 if it has no transaction that early).
+      - period_out_qty: total OUT quantity for transactions with
+        start_date <= transaction_date <= end_date.
+      - period_in_qty: total IN quantity for the same date range.
+
+    end_date defaults to "today" in Asia/Taipei (matching the DB session's
+    time zone) when not supplied.
+
+    Rows are returned in creation order (item_id ASC, which acts as a
+    creation-time proxy -- item_id is an auto-increment IDENTITY column and
+    the app has no separate created-at timestamp). Grouping "Main" before
+    "Accessories" is done client-side, the same way the valuation report and
+    CSV-import preview screens already group by category client-side.
+    """
+    if end_date is None:
+        end_date = datetime.now(ZoneInfo("Asia/Taipei")).date()
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="統計結束日期不可早於統計起始日期")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                i.item_id, i.item_name, i.category,
+                COALESCE(eb.post_balance_qty, 0) AS end_date_qty,
+                COALESCE(outs.qty, 0) AS period_out_qty,
+                COALESCE(ins.qty, 0) AS period_in_qty
+            FROM item_master i
+            LEFT JOIN LATERAL (
+                SELECT t.post_balance_qty
+                FROM stock_transactions t
+                WHERE t.item_id = i.item_id AND t.transaction_date <= %(end_date)s
+                ORDER BY t.transaction_date DESC, t.transaction_time DESC, t.tran_id DESC
+                LIMIT 1
+            ) eb ON true
+            LEFT JOIN LATERAL (
+                SELECT SUM(t.transaction_qty) AS qty
+                FROM stock_transactions t
+                WHERE t.item_id = i.item_id AND t.io_type = 'OUT'
+                  AND t.transaction_date BETWEEN %(start_date)s AND %(end_date)s
+            ) outs ON true
+            LEFT JOIN LATERAL (
+                SELECT SUM(t.transaction_qty) AS qty
+                FROM stock_transactions t
+                WHERE t.item_id = i.item_id AND t.io_type = 'IN'
+                  AND t.transaction_date BETWEEN %(start_date)s AND %(end_date)s
+            ) ins ON true
+            ORDER BY i.item_id ASC
+            """,
+            {"start_date": start_date, "end_date": end_date},
+        )
+        rows = cur.fetchall()
+
+    return {
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "rows": rows,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------

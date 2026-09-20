@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Used by the FileProvider declared in AndroidManifest.xml to safely share
+     exported CSV files (see PeriodSummaryActivity's CSV export) with other
+     apps (e.g. Google Sheets, Excel, email, Drive) via a content:// URI
+     instead of a raw file:// path, which is blocked by Android since API 24. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="exported_reports" path="reports/" />
+</paths>

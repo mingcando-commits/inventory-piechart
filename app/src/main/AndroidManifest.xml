@@ -41,6 +41,23 @@
             android:name=".CsvImportActivity"
             android:exported="false"
             android:parentActivityName=".HomeActivity" />
+        <activity
+            android:name=".PeriodSummaryActivity"
+            android:exported="false"
+            android:parentActivityName=".HomeActivity" />
+
+        <!-- Lets PeriodSummaryActivity share an exported CSV report via a
+             content:// URI (required since API 24; a raw file:// Uri passed
+             to another app throws FileUriExposedException). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

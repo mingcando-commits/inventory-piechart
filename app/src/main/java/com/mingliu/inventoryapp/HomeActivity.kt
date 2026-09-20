@@ -50,7 +50,8 @@ private const val ADMIN_MENU_STOCK_CHART = 4
 private const val ADMIN_MENU_GLOBAL_SETTINGS = 5
 private const val ADMIN_MENU_VALUATION_REPORT = 6
 private const val ADMIN_MENU_CSV_IMPORT = 7
-private const val ADMIN_MENU_LOGOUT = 8
+private const val ADMIN_MENU_PERIOD_SUMMARY = 8
+private const val ADMIN_MENU_LOGOUT = 9
 private const val RADIO_ID_STOCK_IN = 1001
 private const val RADIO_ID_STOCK_OUT = 1002
 
@@ -288,12 +289,12 @@ class HomeActivity : AppCompatActivity() {
         val options = if (currentUserIsAdmin) {
             arrayOf(
                 "人員權限與名冊維護", "變更人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表",
-                "全域匯率及調整 factor 維護", "當前資產估值查詢", "入庫資料匯入 (CSV)", "登出系統，安全退出"
+                "全域匯率及調整 factor 維護", "當前資產估值查詢", "入庫資料匯入 (CSV)", "庫存期間出庫量統計查詢", "登出系統，安全退出"
             )
         } else {
             arrayOf(
                 "人員權限與名冊維護 (僅限管理員)", "變更個人或人員密碼", "設定商品排序偏好", "時序交易查詢", "庫存趨勢圖表 (僅限管理員)",
-                "全域匯率及調整 factor 維護 (僅限管理員)", "當前資產估值查詢 (僅限管理員)", "入庫資料匯入 (僅限管理員)", "登出系統，安全退出"
+                "全域匯率及調整 factor 維護 (僅限管理員)", "當前資產估值查詢 (僅限管理員)", "入庫資料匯入 (僅限管理員)", "庫存期間出庫量統計查詢 (僅限管理員)", "登出系統，安全退出"
             )
         }
 
@@ -336,6 +337,14 @@ class HomeActivity : AppCompatActivity() {
                         dialog.dismiss()
                         if (currentUserIsAdmin) {
                             csvPickerLauncher.launch("text/*")
+                        } else {
+                            Toast.makeText(this, "此功能已鎖定，僅限管理員操作", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    ADMIN_MENU_PERIOD_SUMMARY -> {
+                        dialog.dismiss()
+                        if (currentUserIsAdmin) {
+                            startActivity(Intent(this, PeriodSummaryActivity::class.java))
                         } else {
                             Toast.makeText(this, "此功能已鎖定，僅限管理員操作", Toast.LENGTH_SHORT).show()
                         }

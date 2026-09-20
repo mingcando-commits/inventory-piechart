@@ -113,6 +113,17 @@ interface ApiService {
     fun updateGlobalSettings(
         @Body request: GlobalSettingsUpdateRequest
     ): Call<ResponseBody>
+
+    /**
+     * 庫存期間出庫量統計查詢: per-item stock balance as of end_date, plus total
+     * OUT/IN quantities for transactions dated between start_date and
+     * end_date (inclusive). end_date defaults server-side to today if omitted.
+     */
+    @GET("api/stock/period-summary")
+    fun getPeriodSummary(
+        @Query("start_date") startDate: String,
+        @Query("end_date") endDate: String? = null
+    ): Call<PeriodSummaryResponse>
 }
 
 // ========================================================
@@ -315,6 +326,22 @@ data class GlobalSettingsResponse(
 data class GlobalSettingsUpdateRequest(
     val global_exchange_rate: Double,
     val global_tax_coefficient: Double
+)
+
+/** Response body for GET /api/stock/period-summary. */
+data class PeriodSummaryResponse(
+    val start_date: String,
+    val end_date: String,
+    val rows: List<PeriodSummaryRow>
+)
+
+data class PeriodSummaryRow(
+    val item_id: Int,
+    val item_name: String,
+    val category: String,
+    val end_date_qty: Int,
+    val period_out_qty: Int,
+    val period_in_qty: Int
 )
 
 // ========================================================
